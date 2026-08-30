@@ -54,3 +54,50 @@ jobs:
           name: readest-windows
           path: target/release/bundle/**
           if-no-files-found: error
+
+  release:
+    name: Create GitHub Release
+    needs: desktop-build
+    if: github.event_name == 'push' && success()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Get version
+        id: version
+        working-directory: apps/readest-app
+        run: echo "app_version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Check if release already exists
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "v${{ steps.version.outputs.app_version }}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download build artifacts
+        if: steps.check.outputs.exists == 'false'
+        uses: actions/download-artifact@v4
+        with:
+          name: readest-windows
+          path: dist
+
+      - name: Create Release
+        if: steps.check.outputs.exists == 'false'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.app_version }}
+          target_commitish: ${{ github.sha }}
+          name: Readest v${{ steps.version.outputs.app_version }}
+          body: |
+            Windows desktop build from the pure-readest fork.
+            Commit: `${{ github.sha }}`
+          files: dist/**
+          fail_on_unmatched_files: true
