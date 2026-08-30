@@ -1,0 +1,567 @@
+import clsx from 'clsx';
+import React, { useEffect } from 'react';
+import { useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { BiMoon, BiSun } from 'react-icons/bi';
+import { PiGear } from 'react-icons/pi';
+import { TbSunMoon } from 'react-icons/tb';
+import { MdZoomOut, MdZoomIn, MdCheck, MdInfoOutline, MdOutlineSensors } from 'react-icons/md';
+import { MdRemove, MdAdd, MdContrast } from 'react-icons/md';
+import { MdSync, MdSyncProblem } from 'react-icons/md';
+import { IoMdExpand } from 'react-icons/io';
+import { IoShareOutline } from 'react-icons/io5';
+import { TbArrowAutofitWidth } from 'react-icons/tb';
+import { TbColumns1, TbColumns2 } from 'react-icons/tb';
+import { TbCarouselVertical, TbCarouselHorizontal } from 'react-icons/tb';
+
+import {
+  MAX_ZOOM_LEVEL,
+  MIN_ZOOM_LEVEL,
+  ZOOM_STEP,
+  MAX_CONTRAST,
+  MIN_CONTRAST,
+  CONTRAST_STEP,
+} from '@/services/constants';
+import { useEnv } from '@/context/EnvContext';
+import { useAuth } from '@/context/AuthContext';
+import { useThemeStore } from '@/store/themeStore';
+import { useReaderStore } from '@/store/readerStore';
+import { useBookDataStore } from '@/store/bookDataStore';
+import { useSettingsStore } from '@/store/settingsStore';
+import { useTranslation } from '@/hooks/useTranslation';
+import { getStyles } from '@/utils/style';
+import { navigateToLogin } from '@/utils/nav';
+import { getScrollGapAttr } from '@/utils/webtoon';
+import { applyPageTurnAttributes } from '@/app/reader/hooks/useCapturedTurn';
+import { eventDispatcher } from '@/utils/event';
+import { getMaxInlineSize } from '@/utils/config';
+import { nextThemeMode } from '@/utils/ambientLight';
+import dayjs from 'dayjs';
+import { clampSyncTimeForDisplay } from '@/utils/time';
+import { saveViewSettings } from '@/helpers/settings';
+import { tauriHandleToggleFullScreen } from '@/utils/window';
+import MenuItem from '@/components/MenuItem';
+import Menu from '@/components/Menu';
+
+interface ViewMenuProps {
+  bookKey: string;
+  setIsDropdownOpen?: (open: boolean) => void;
+  onShowMetaHashDialog?: () => void;
+}
+
+const ViewMenu: React.FC<ViewMenuProps> = ({
+  bookKey,
+  setIsDropdownOpen,
+  onShowMetaHashDialog,
+}) => {
+  const _ = useTranslation();
+  const router = useRouter();
+  const { user } = useAuth();
+  const { envConfig, appService } = useEnv();
+  const { getConfig, getBookData } = useBookDataStore();
+  const { setSettingsDialogOpen, setSettingsDialogBookKey } = useSettingsStore();
+  const { getView, getViewSettings, getViewState, getProgress, setViewSettings, recreateViewer } =
+    useReaderStore();
+  const config = getConfig(bookKey)!;
+  const bookData = getBookData(bookKey)!;
+  const viewSettings = getViewSettings(bookKey)!;
+  const viewState = getViewState(bookKey);
+
+  const { themeMode, isDarkMode, setThemeMode } = useThemeStore();
+  const [isScrolledMode, setScrolledMode] = useState(viewSettings!.scrolled);
+  const [scrolledDirection, setScrolledDirection] = useState(
+    viewSettings!.scrolledDirection ?? 'vertical',
+  );
+  const [webtoonMode, setWebtoonMode] = useState(viewSettings!.webtoonMode ?? false);
+  const [isParagraphMode, setParagraphMode] = useState(
+    viewSettings?.paragraphMode?.enabled ?? false,
+  );
+  const [zoomLevel, setZoomLevel] = useState(viewSettings!.zoomLevel!);
+  const [contrast, setContrast] = useState(viewSettings!.contrast ?? 100);
+  const [zoomMode, setZoomMode] = useState(viewSettings!.zoomMode!);
+  const [spreadMode, setSpreadMode] = useState(viewSettings!.spreadMode!);
+  const [keepCoverSpread, setKeepCoverSpread] = useState(viewSettings!.keepCoverSpread!);
+  const [invertImgColorInDark, setInvertImgColorInDark] = useState(
+    viewSettings!.invertImgColorInDark,
+  );
+  const [applyThemeToPDF, setApplyThemeToPDF] = useState(viewSettings!.applyThemeToPDF!);
+  const [rtlSpread, setRtlSpread] = useState(bookData?.bookDoc?.dir === 'rtl');
+
+  const zoomIn = () => setZoomLevel((prev) => Math.min(prev + ZOOM_STEP, MAX_ZOOM_LEVEL));
+  const zoomOut = () => setZoomLevel((prev) => Math.max(prev - ZOOM_STEP, MIN_ZOOM_LEVEL));
+  const resetZoom = () => setZoomLevel(100);
+  const increaseContrast = () =>
+    setContrast((prev) => Math.min(prev + CONTRAST_STEP, MAX_CONTRAST));
+  const decreaseContrast = () =>
+    setContrast((prev) => Math.max(prev - CONTRAST_STEP, MIN_CONTRAST));
+  const resetContrast = () => setContrast(100);
+  const toggleScrolledMode = () => setScrolledMode(!isScrolledMode);
+  const toggleWebtoonMode = () => setWebtoonMode(!webtoonMode);
+  const toggleParagraphMode = () => {
+    setParagraphMode(!isParagraphMode);
+    eventDispatcher.dispatch('toggle-paragraph-mode', { bookKey });
+    setIsDropdownOpen?.(false);
+  };
+
+  const openSettingsDialog = () => {
+    setIsDropdownOpen?.(false);
+    setSettingsDialogBookKey(bookKey);
+    setSettingsDialogOpen(true);
+  };
+
+  const cycleThemeMode = () => {
+    setThemeMode(nextThemeMode(themeMode, !!appService?.hasAmbientLightSensor));
+  };
+
+  const handleFullScreen = () => {
+    tauriHandleToggleFullScreen();
+    setIsDropdownOpen?.(false);
+  };
+
+  const handleSync = () => {
+    if (!user) {
+      navigateToLogin(router);
+      setIsDropdownOpen?.(false);
+    } else {
+      eventDispatcher.dispatch('sync-book-progress', { bookKey });
+    }
+  };
+
+  const handleStartRSVP = () => {
+    setIsDropdownOpen?.(false);
+    eventDispatcher.dispatch('rsvp-start', { bookKey });
+  };
+
+  const toggleAutoScroll = () => {
+    setIsDropdownOpen?.(false);
+    eventDispatcher.dispatch('autoscroll-toggle', { bookKey });
+  };
+
+  const handleShare = () => {
+    setIsDropdownOpen?.(false);
+    if (!bookData?.book) return;
+    const progress = getProgress(bookKey);
+    eventDispatcher.dispatch('show-share-dialog', {
+      book: bookData.book,
+      cfi: progress?.location ?? null,
+    });
+  };
+
+  useEffect(() => {
+    if (scrolledDirection === (viewSettings.scrolledDirection ?? 'vertical')) return;
+    viewSettings.scrolledDirection = scrolledDirection;
+    getView(bookKey)?.renderer.setAttribute('scroll-direction', scrolledDirection);
+    setViewSettings(bookKey, viewSettings);
+    saveViewSettings(envConfig, bookKey, 'scrolledDirection', scrolledDirection, true, false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scrolledDirection]);
+
+  useEffect(() => {
+    if (isScrolledMode === viewSettings!.scrolled) return;
+    viewSettings!.scrolled = isScrolledMode;
+    if (!isScrolledMode && webtoonMode) setWebtoonMode(false);
+    getView(bookKey)?.renderer.setAttribute('flow', isScrolledMode ? 'scrolled' : 'paginated');
+    getView(bookKey)?.renderer.setAttribute(
+      'max-inline-size',
+      `${getMaxInlineSize(viewSettings)}px`,
+    );
+    getView(bookKey)?.renderer.setStyles?.(getStyles(viewSettings!));
+    // `scrolled` decides which engine owns a swipe: leaving it stale keeps the
+    // paginator's `turn-style` / cleared `no-swipe` from scroll flow, so the
+    // paginator animates the swipe itself while the touch interceptor — which
+    // recomputes eligibility live — runs a captured turn over the top, and
+    // three pages slide at once.
+    const view = getView(bookKey);
+    if (view) applyPageTurnAttributes(view, viewSettings!, !!bookData?.isFixedLayout);
+    setViewSettings(bookKey, viewSettings!);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isScrolledMode]);
+
+  useEffect(() => {
+    if (webtoonMode === viewSettings.webtoonMode) return;
+    viewSettings.webtoonMode = webtoonMode;
+    getView(bookKey)?.renderer.setAttribute('scroll-gap', getScrollGapAttr(webtoonMode));
+    if (webtoonMode) {
+      // Webtoon Mode implies scrolled flow + fit-width (scale-factor 100) so pages
+      // fill the width without horizontal overflow/clipping. Reuse the existing
+      // scrolled / zoomLevel effects rather than duplicating their renderer wiring.
+      if (!isScrolledMode) setScrolledMode(true);
+      if (zoomLevel !== 100) setZoomLevel(100);
+      if (scrolledDirection !== 'vertical') setScrolledDirection('vertical');
+      saveViewSettings(envConfig, bookKey, 'scrolled', true, false, false);
+    }
+    setViewSettings(bookKey, viewSettings);
+    saveViewSettings(envConfig, bookKey, 'webtoonMode', webtoonMode, false, false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [webtoonMode]);
+
+  useEffect(() => {
+    if (zoomLevel === viewSettings.zoomLevel) return;
+    saveViewSettings(envConfig, bookKey, 'zoomLevel', zoomLevel, true, true);
+    if (bookData.bookDoc?.rendition?.layout === 'pre-paginated') {
+      getView(bookKey)?.renderer.setAttribute('scale-factor', zoomLevel);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [zoomLevel]);
+
+  useEffect(() => {
+    if (contrast === viewSettings.contrast) return;
+    saveViewSettings(envConfig, bookKey, 'contrast', contrast, true, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [contrast]);
+
+  useEffect(() => {
+    if (invertImgColorInDark === viewSettings.invertImgColorInDark) return;
+    saveViewSettings(envConfig, bookKey, 'invertImgColorInDark', invertImgColorInDark, true, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [invertImgColorInDark]);
+
+  useEffect(() => {
+    if (applyThemeToPDF === viewSettings.applyThemeToPDF) return;
+    saveViewSettings(envConfig, bookKey, 'applyThemeToPDF', applyThemeToPDF, true, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [applyThemeToPDF]);
+
+  useEffect(() => {
+    if (zoomMode === viewSettings.zoomMode) return;
+    viewSettings.zoomMode = zoomMode;
+    getView(bookKey)?.renderer.setAttribute('zoom', zoomMode);
+    setViewSettings(bookKey, viewSettings);
+    saveViewSettings(envConfig, bookKey, 'zoomMode', zoomMode, true, false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [zoomMode]);
+
+  useEffect(() => {
+    if (spreadMode === viewSettings.spreadMode) return;
+    viewSettings.spreadMode = spreadMode;
+    getView(bookKey)?.renderer.setAttribute('spread', spreadMode);
+    setViewSettings(bookKey, viewSettings);
+    saveViewSettings(envConfig, bookKey, 'spreadMode', spreadMode, true, false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [spreadMode]);
+
+  useEffect(() => {
+    if (keepCoverSpread === viewSettings.keepCoverSpread) return;
+    if (!bookData?.bookDoc?.sections?.length) return;
+    viewSettings.keepCoverSpread = keepCoverSpread;
+    const coverSide = bookData.bookDoc.dir === 'rtl' ? 'right' : 'left';
+    bookData.bookDoc.sections[0]!.pageSpread = keepCoverSpread ? '' : coverSide;
+    getView(bookKey)?.renderer.setAttribute('spread', spreadMode);
+    setViewSettings(bookKey, viewSettings);
+    saveViewSettings(envConfig, bookKey, 'keepCoverSpread', keepCoverSpread, true, false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [keepCoverSpread]);
+
+  useEffect(() => {
+    const bookDoc = bookData?.bookDoc;
+    if (!bookDoc || rtlSpread === (bookDoc.dir === 'rtl')) return;
+    // Writing mode is per-book only (no global fallback), and horizontal-rl is
+    // what flips both the spread order and the page progression, so the toggle
+    // rides the same setting the Layout panel edits instead of a new one.
+    const writingMode = rtlSpread ? 'horizontal-rl' : 'horizontal-tb';
+    viewSettings.vertical = false;
+    saveViewSettings(envConfig, bookKey, 'writingMode', writingMode, true).then(() => {
+      const view = getView(bookKey);
+      if (view) view.book.dir = rtlSpread ? 'rtl' : 'ltr';
+      recreateViewer(envConfig, bookKey);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rtlSpread]);
+
+  const lastSyncTime = Math.max(
+    config?.lastSyncedAtConfig || 0,
+    config?.lastSyncedAtNotes || 0,
+    config?.lastPushedAtConfig || 0,
+    config?.lastPushedAtNotes || 0,
+  );
+
+  return (
+    <Menu
+      className={clsx(
+        'view-menu dropdown-content dropdown-right no-triangle z-20 mt-1.5 border',
+        'bgcolor-base-200 shadow-2xl',
+      )}
+      onCancel={() => setIsDropdownOpen?.(false)}
+    >
+      {bookData.bookDoc?.rendition?.layout === 'pre-paginated' && (
+        <>
+          <div
+            title={_('Zoom Level')}
+            className={clsx('flex items-center justify-between rounded-md')}
+          >
+            <button
+              title={_('Zoom Out')}
+              onClick={zoomOut}
+              className={clsx(
+                'hover:bg-base-300 text-base-content rounded-full p-2',
+                zoomLevel <= MIN_ZOOM_LEVEL && 'btn-disabled text-gray-400',
+              )}
+            >
+              <MdZoomOut />
+            </button>
+            <button
+              title={_('Reset Zoom')}
+              className={clsx(
+                'hover:bg-base-300 text-base-content h-8 min-h-8 w-[50%] rounded-md p-1 text-center',
+              )}
+              onClick={resetZoom}
+            >
+              {Math.round(zoomLevel)}%
+            </button>
+            <button
+              title={_('Zoom In')}
+              onClick={zoomIn}
+              className={clsx(
+                'hover:bg-base-300 text-base-content rounded-full p-2',
+                zoomLevel >= MAX_ZOOM_LEVEL && 'btn-disabled text-gray-400',
+              )}
+            >
+              <MdZoomIn />
+            </button>
+          </div>
+
+          <div
+            title={_('Contrast')}
+            className={clsx('mt-2 flex items-center justify-between rounded-md')}
+          >
+            <button
+              title={_('Decrease Contrast')}
+              onClick={decreaseContrast}
+              className={clsx(
+                'hover:bg-base-300 text-base-content rounded-full p-2',
+                contrast <= MIN_CONTRAST && 'btn-disabled text-gray-400',
+              )}
+            >
+              <MdRemove />
+            </button>
+            <button
+              title={_('Reset Contrast')}
+              className={clsx(
+                'hover:bg-base-300 text-base-content flex h-8 min-h-8 w-[50%] items-center justify-center gap-1 rounded-md p-1 text-center',
+              )}
+              onClick={resetContrast}
+            >
+              <MdContrast size={16} />
+              {Math.round(contrast)}%
+            </button>
+            <button
+              title={_('Increase Contrast')}
+              onClick={increaseContrast}
+              className={clsx(
+                'hover:bg-base-300 text-base-content rounded-full p-2',
+                contrast >= MAX_CONTRAST && 'btn-disabled text-gray-400',
+              )}
+            >
+              <MdAdd />
+            </button>
+          </div>
+
+          <>
+            <div
+              title={_('Zoom Mode')}
+              className={clsx('my-2 flex items-center justify-between rounded-md')}
+            >
+              <button
+                title={_('Single Page')}
+                onClick={() => {
+                  setSpreadMode('none');
+                  if (isScrolledMode) setScrolledMode(false);
+                }}
+                className={clsx(
+                  'hover:bg-base-300 text-base-content rounded-full p-2',
+                  !isScrolledMode && spreadMode === 'none' && 'bg-base-300/75',
+                )}
+              >
+                <TbColumns1 />
+              </button>
+              <button
+                title={_('Auto Spread')}
+                onClick={() => {
+                  setSpreadMode('auto');
+                  if (isScrolledMode) setScrolledMode(false);
+                }}
+                className={clsx(
+                  'hover:bg-base-300 text-base-content rounded-full p-2',
+                  !isScrolledMode && spreadMode === 'auto' && 'bg-base-300/75',
+                )}
+              >
+                <TbColumns2 />
+              </button>
+              <button
+                title={_('Vertical Scrolling')}
+                onClick={() => {
+                  setScrolledDirection('vertical');
+                  if (!isScrolledMode) setScrolledMode(true);
+                }}
+                className={clsx(
+                  'hover:bg-base-300 text-base-content rounded-full p-2',
+                  isScrolledMode && scrolledDirection === 'vertical' && 'bg-base-300/75',
+                )}
+              >
+                <TbCarouselVertical />
+              </button>
+              <button
+                title={_('Horizontal Scrolling')}
+                onClick={() => {
+                  if (webtoonMode) setWebtoonMode(false);
+                  setScrolledDirection('horizontal');
+                  if (!isScrolledMode) setScrolledMode(true);
+                }}
+                className={clsx(
+                  'hover:bg-base-300 text-base-content rounded-full p-2',
+                  isScrolledMode && scrolledDirection === 'horizontal' && 'bg-base-300/75',
+                )}
+              >
+                <TbCarouselHorizontal />
+              </button>
+              <div className='bg-base-300 mx-2 h-6 w-[1px]' />
+              <button
+                title={_('Fit Page')}
+                onClick={setZoomMode.bind(null, 'fit-page')}
+                className={clsx(
+                  'hover:bg-base-300 text-base-content rounded-full p-2',
+                  zoomMode === 'fit-page' && 'bg-base-300/75',
+                )}
+              >
+                <IoMdExpand />
+              </button>
+              <button
+                title={_('Fit Width')}
+                onClick={setZoomMode.bind(null, 'fit-width')}
+                className={clsx(
+                  'hover:bg-base-300 text-base-content rounded-full p-2',
+                  zoomMode === 'fit-width' && 'bg-base-300/75',
+                )}
+              >
+                <TbArrowAutofitWidth />
+              </button>
+            </div>
+
+            <MenuItem
+              label={_('Separate Cover Page')}
+              Icon={keepCoverSpread ? MdCheck : undefined}
+              onClick={() => setKeepCoverSpread(!keepCoverSpread)}
+              disabled={spreadMode === 'none'}
+            />
+            <MenuItem
+              label={_('Right-to-Left Pages')}
+              Icon={rtlSpread ? MdCheck : undefined}
+              onClick={() => setRtlSpread(!rtlSpread)}
+            />
+            <MenuItem label={_('Webtoon Mode')} toggled={webtoonMode} onClick={toggleWebtoonMode} />
+          </>
+          <hr aria-hidden='true' className='border-base-300 my-1' />
+        </>
+      )}
+
+      {!bookData.isFixedLayout && (
+        <MenuItem
+          label={_('Scrolled Mode')}
+          shortcut='Shift+J'
+          Icon={isScrolledMode ? MdCheck : undefined}
+          onClick={toggleScrolledMode}
+        />
+      )}
+
+      <MenuItem
+        label={_('Auto Scroll')}
+        shortcut='Shift+A'
+        Icon={viewState?.autoScrollEnabled ? MdCheck : undefined}
+        onClick={toggleAutoScroll}
+        disabled={!isScrolledMode}
+      />
+
+      <hr aria-hidden='true' className='border-base-300 my-1' />
+
+      <MenuItem
+        label={_('Paragraph Mode')}
+        shortcut='Shift+P'
+        Icon={isParagraphMode ? MdCheck : undefined}
+        onClick={toggleParagraphMode}
+        disabled={bookData.isFixedLayout}
+      />
+
+      <MenuItem
+        label={_('Speed Reading Mode')}
+        shortcut='Shift+V'
+        onClick={handleStartRSVP}
+        disabled={bookData.isFixedLayout}
+      />
+
+      <hr aria-hidden='true' className='border-base-300 my-1' />
+
+      <MenuItem
+        label={
+          !user
+            ? _('Sign in to Sync')
+            : lastSyncTime
+              ? _('Synced {{time}}', {
+                  time: dayjs(clampSyncTimeForDisplay(lastSyncTime)).fromNow(),
+                })
+              : _('Never synced')
+        }
+        Icon={user ? MdSync : MdSyncProblem}
+        iconClassName={user && viewState?.syncing ? 'animate-reverse-spin' : ''}
+        onClick={handleSync}
+        siblings={
+          <button
+            aria-label={_('Sync Info')}
+            title={_('Sync Info')}
+            className='hover:bg-base-300 text-base-content/70 mx-1 rounded-md px-2'
+            onClick={() => {
+              setIsDropdownOpen?.(false);
+              onShowMetaHashDialog?.();
+            }}
+          >
+            <MdInfoOutline size={16} />
+          </button>
+        }
+      />
+
+      <hr aria-hidden='true' className='border-base-300 my-1' />
+
+      {appService?.hasWindow && <MenuItem label={_('Fullscreen')} onClick={handleFullScreen} />}
+      <MenuItem
+        label={
+          themeMode === 'dark'
+            ? _('Dark Mode')
+            : themeMode === 'light'
+              ? _('Light Mode')
+              : themeMode === 'ambient'
+                ? _('Ambient Mode')
+                : _('Auto Mode')
+        }
+        Icon={
+          themeMode === 'dark'
+            ? BiMoon
+            : themeMode === 'light'
+              ? BiSun
+              : themeMode === 'ambient'
+                ? MdOutlineSensors
+                : TbSunMoon
+        }
+        onClick={cycleThemeMode}
+      />
+      <MenuItem label={_('Settings')} Icon={PiGear} onClick={openSettingsDialog} />
+      {bookData.book?.format === 'PDF' && appService?.supportsCanvasContext2DFilter && (
+        <MenuItem
+          label={_('Apply Theme Colors to PDF')}
+          Icon={applyThemeToPDF ? MdCheck : undefined}
+          onClick={() => setApplyThemeToPDF(!applyThemeToPDF)}
+        />
+      )}
+      <MenuItem
+        label={_('Invert Image In Dark Mode')}
+        disabled={!isDarkMode}
+        Icon={invertImgColorInDark ? MdCheck : undefined}
+        onClick={() => setInvertImgColorInDark(!invertImgColorInDark)}
+      />
+
+      <hr aria-hidden='true' className='border-base-300 my-1' />
+
+      <MenuItem label={_('Share Book')} Icon={IoShareOutline} onClick={handleShare} />
+    </Menu>
+  );
+};
+
+export default ViewMenu;

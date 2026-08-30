@@ -1,0 +1,34 @@
+<b>Readest</b> is a modern, open-source ebook reader for people who read a lot, and want their books, notes and progress to follow them everywhere.
+
+Open EPUB, PDF, MOBI, AZW3, FB2, CBZ, TXT and Markdown, and tune the reading experience down to the last detail.
+
+<b>Read your way</b>
+• Paginated or scrolling modes with smooth page-turn animations
+• Custom fonts, themes, spacing, margins and columns
+• Vertical text for CJK books
+• Built for e-ink, with contrast tuned for slow-refresh screens
+• Open up to four books side by side for research and comparison
+
+<b>Your whole library</b>
+• Browse and download from OPDS catalogs and public libraries
+• Connect to Calibre and Calibre-Web, covers and metadata included
+• Organize with custom bookshelf groups
+• Full-text search inside a book
+
+<b>Notes that last</b>
+• Highlights, bookmarks and structured notes
+• Copy a highlight together with a deep link back to the passage
+• Export your annotations
+
+<b>Listen and understand</b>
+• Text-to-speech with downloadable offline voices and Android Auto support
+• Translate a sentence, a page, or an entire book
+• Wikipedia and dictionary lookup without leaving the page
+
+<b>Sync everywhere</b>
+• Readest Cloud, or bring your own: Google Drive, OneDrive, WebDAV, S3
+• KOReader sync keeps your progress in step with your e-reader
+• Android, iOS, macOS, Windows, Linux and the web
+
+Readest is open source. Questions or ideas: support@readest.com
+Privacy policy: https://readest.com/privacy-policy

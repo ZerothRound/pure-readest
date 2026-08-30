@@ -1,0 +1,464 @@
+import clsx from 'clsx';
+import React, { useState } from 'react';
+import {
+  MdOutlineCloudDownload,
+  MdOutlineCloudUpload,
+  MdOutlineDelete,
+  MdOutlineEdit,
+  MdMenu,
+  MdExpandMore,
+  MdExpandLess,
+} from 'react-icons/md';
+
+import { Book } from '@/types/book';
+import { BookMetadata } from '@/libs/document';
+import { openExternalUrl } from '@/utils/open';
+import { getBookGoodreadsQuery, getGoodreadsSearchUrl } from '@/utils/goodreads';
+import { useTranslation } from '@/hooks/useTranslation';
+import { useSettingsStore } from '@/store/settingsStore';
+import { useEnv } from '@/context/EnvContext';
+import {
+  formatAuthors,
+  formatCalibreColumnValue,
+  formatDate,
+  formatBytes,
+  formatLanguage,
+  formatPublisher,
+  formatTitle,
+  getContributorNames,
+} from '@/utils/book';
+import { isFeedBook } from '@/services/rss/feedBookUrl';
+import { saveSysSettings } from '@/helpers/settings';
+import BookCover from '@/components/BookCover';
+import BookCoverViewer, { useBookCoverViewer } from '@/components/BookCoverViewer';
+import Dropdown from '../Dropdown';
+import MenuItem from '../MenuItem';
+
+interface BookDetailViewProps {
+  book: Book;
+  metadata: BookMetadata | null;
+  fileSize: number | null;
+  shareEnabled?: boolean;
+  onEdit?: () => void;
+  onDelete?: () => void;
+  onDeleteCloudBackup?: () => void;
+  onDeleteLocalCopy?: () => void;
+  onDownload?: () => void;
+  onUpload?: () => void;
+  onShare?: () => void;
+  onExport?: () => void;
+  onMetadataValueClick?: (type: 'tag' | 'subject', value: string) => void;
+}
+
+const BookDetailView: React.FC<BookDetailViewProps> = ({
+  book,
+  metadata,
+  fileSize,
+  shareEnabled,
+  onEdit,
+  onDelete,
+  onDeleteCloudBackup,
+  onDeleteLocalCopy,
+  onDownload,
+  onUpload,
+  onShare,
+  onExport,
+  onMetadataValueClick,
+}) => {
+  const _ = useTranslation();
+  const { envConfig } = useEnv();
+  const { settings } = useSettingsStore();
+  const [subjectsExpanded, setSubjectsExpanded] = useState(false);
+  const { coverSrc, openCoverViewer, closeCoverViewer } = useBookCoverViewer(book);
+  const subjects = getContributorNames(metadata?.subject);
+  const visibleSubjects = subjectsExpanded ? subjects : subjects.slice(0, 3);
+
+  const renderMetadataChip = (type: 'tag' | 'subject', value: string) => {
+    const className = 'badge badge-outline h-auto min-h-6 whitespace-normal px-2 py-1 text-xs';
+    return onMetadataValueClick ? (
+      <button
+        key={value}
+        type='button'
+        className={`${className} hover:bg-base-200`}
+        onClick={() => onMetadataValueClick(type, value.trim())}
+      >
+        {value}
+      </button>
+    ) : (
+      <span key={value} className={className}>
+        {value}
+      </span>
+    );
+  };
+
+  // Export and Share both read the book file off disk; `fileSize` is only
+  // non-null when getBookFileSize could actually open the local copy.
+  const hasLocalFile = fileSize !== null;
+
+  const toggleSeriesCollapse = () => {
+    saveSysSettings(envConfig, 'metadataSeriesCollapsed', !settings.metadataSeriesCollapsed);
+  };
+
+  const toggleOthersCollapse = () => {
+    saveSysSettings(envConfig, 'metadataOthersCollapsed', !settings.metadataOthersCollapsed);
+  };
+
+  const toggleDescriptionCollapse = () => {
+    saveSysSettings(
+      envConfig,
+      'metadataDescriptionCollapsed',
+      !settings.metadataDescriptionCollapsed,
+    );
+  };
+
+  return (
+    <div className='relative w-full rounded-lg'>
+      <div className='mb-6 me-4 flex h-32 items-start'>
+        <button
+          type='button'
+          aria-label={_('View Book Cover')}
+          className='me-6 aspect-[28/41] h-32 shadow-lg sm:me-10'
+          onClick={openCoverViewer}
+        >
+          <BookCover mode='list' book={book} showSpine={settings.librarySkeuomorphicCovers} />
+        </button>
+        {coverSrc && <BookCoverViewer src={coverSrc} onClose={closeCoverViewer} />}
+        <div className='title-author flex h-32 flex-col justify-between'>
+          <div>
+            <p className='text-base-content mb-2 line-clamp-2 break-words text-lg font-bold'>
+              {formatTitle(book.title).replace(/\u00A0/g, ' ') || _('Untitled')}
+            </p>
+            <p className='text-neutral-content line-clamp-1'>
+              {formatAuthors(book.author, book.primaryLanguage) || _('Unknown')}
+            </p>
+          </div>
+          <div className='flex flex-nowrap items-center gap-3 sm:gap-x-4'>
+            {onEdit && (
+              <button
+                onClick={onEdit}
+                className={!metadata ? 'btn-disabled opacity-50' : ''}
+                title={_('Edit Metadata')}
+              >
+                <MdOutlineEdit className='hover:fill-blue-500' />
+              </button>
+            )}
+            {book.uploadedAt && onDownload && (
+              <button onClick={onDownload} title={_('Download from Cloud')}>
+                <MdOutlineCloudDownload className='fill-base-content' />
+              </button>
+            )}
+            {/* A feed book is fileless — there is nothing to push (#5307). */}
+            {book.downloadedAt && !isFeedBook(book) && onUpload && (
+              <button onClick={onUpload} title={_('Upload to Cloud')}>
+                <MdOutlineCloudUpload className='fill-base-content' />
+              </button>
+            )}
+            {onDelete && (
+              <Dropdown
+                label={_('Delete Book Options')}
+                className='dropdown-bottom dropdown-center flex justify-center'
+                buttonClassName='btn btn-ghost h-8 min-h-8 w-8 p-0'
+                toggleButton={<MdOutlineDelete className='fill-red-500' />}
+              >
+                <div
+                  className={clsx(
+                    'delete-menu dropdown-content no-triangle relative!',
+                    'border-base-300 bg-base-200! z-20 mt-1 max-w-[90vw] shadow-2xl',
+                  )}
+                >
+                  <MenuItem
+                    noIcon
+                    transient
+                    label={_('Remove from Cloud & Device')}
+                    onClick={onDelete}
+                  />
+                  {/* Offered only where a cloud-only removal means something: a
+                      third-party provider mirrors the library, so it would just
+                      re-upload the still-local book on its next sync (#5084). */}
+                  {onDeleteCloudBackup && (
+                    <MenuItem
+                      noIcon
+                      transient
+                      label={_('Remove from Cloud Only')}
+                      onClick={onDeleteCloudBackup}
+                      disabled={!book.uploadedAt}
+                    />
+                  )}
+                  <MenuItem
+                    noIcon
+                    transient
+                    label={_('Remove from Device Only')}
+                    onClick={onDeleteLocalCopy}
+                    disabled={!book.downloadedAt}
+                  />
+                </div>
+              </Dropdown>
+            )}
+            <Dropdown
+              label={_('More Actions')}
+              className='dropdown-bottom dropdown-center flex justify-center'
+              buttonClassName='btn btn-ghost h-8 min-h-8 w-8 p-0'
+              toggleButton={<MdMenu className='fill-base-content' />}
+            >
+              <div
+                className={clsx(
+                  'more-menu dropdown-content no-triangle relative!',
+                  'border-base-300 bg-base-200! z-20 mt-1 max-w-[90vw] shadow-2xl',
+                )}
+              >
+                <MenuItem
+                  noIcon
+                  transient
+                  label={_('Search on Goodreads')}
+                  onClick={() =>
+                    openExternalUrl(getGoodreadsSearchUrl(getBookGoodreadsQuery(book)))
+                  }
+                />
+                {onShare && (
+                  <MenuItem
+                    noIcon
+                    transient
+                    label={_('Share Book')}
+                    disabled={!shareEnabled}
+                    tooltip={
+                      shareEnabled
+                        ? undefined
+                        : _('Sign in and make the book available to share it')
+                    }
+                    onClick={onShare}
+                  />
+                )}
+                {onExport && (
+                  <MenuItem
+                    noIcon
+                    transient
+                    label={_('Export Book')}
+                    disabled={!hasLocalFile}
+                    tooltip={hasLocalFile ? undefined : _('Download the book to export it')}
+                    onClick={onExport}
+                  />
+                )}
+              </div>
+            </Dropdown>
+          </div>
+        </div>
+      </div>
+
+      <div className='text-base-content my-4'>
+        <div className='metadata-others'>
+          <button
+            className={clsx(
+              'flex w-full items-center justify-between px-4 py-3 text-left transition-colors',
+              settings.metadataOthersCollapsed ? 'hover:bg-base-200 rounded-lg' : '',
+            )}
+            onClick={toggleOthersCollapse}
+          >
+            <span className='text-neutral-content/85 text-base font-semibold'>{_('Metadata')}</span>
+            <div className='transition-transform duration-200'>
+              {settings.metadataOthersCollapsed ? (
+                <MdExpandMore className='h-5 w-5' />
+              ) : (
+                <MdExpandLess className='h-5 w-5' />
+              )}
+            </div>
+          </button>
+          {!settings.metadataOthersCollapsed && (
+            <div className='px-4 py-1'>
+              <div className='grid grid-cols-2 gap-4 sm:grid-cols-3'>
+                <div className='overflow-hidden'>
+                  <span className='font-bold'>{_('Publisher')}</span>
+                  <p className='text-neutral-content text-sm'>
+                    {formatPublisher(metadata?.publisher || '') || _('Unknown')}
+                  </p>
+                </div>
+                <div className='overflow-hidden pe-1 text-end sm:text-start'>
+                  <span className='font-bold'>{_('Published')}</span>
+                  <p className='text-neutral-content text-sm'>
+                    {formatDate(metadata?.published, true) || _('Unknown')}
+                  </p>
+                </div>
+                <div className='overflow-hidden'>
+                  <span className='font-bold'>{_('Updated')}</span>
+                  <p className='text-neutral-content text-sm'>{formatDate(book.updatedAt) || ''}</p>
+                </div>
+                <div className='overflow-hidden pe-1 text-end sm:text-start'>
+                  <span className='font-bold'>{_('Added')}</span>
+                  <p className='text-neutral-content text-sm'>{formatDate(book.createdAt) || ''}</p>
+                </div>
+                <div className='overflow-hidden'>
+                  <span className='font-bold'>{_('Language')}</span>
+                  <p className='text-neutral-content text-sm'>
+                    {formatLanguage(metadata?.language) || _('Unknown')}
+                  </p>
+                </div>
+                <div className='overflow-hidden pe-1 text-end sm:text-start'>
+                  <span className='font-bold'>{_('Format')}</span>
+                  <p className='text-neutral-content text-sm'>{book.format || _('Unknown')}</p>
+                </div>
+                <div className='overflow-hidden'>
+                  <span className='font-bold'>{_('File Size')}</span>
+                  <p className='text-neutral-content text-sm'>
+                    {formatBytes(fileSize) || _('Unknown')}
+                  </p>
+                </div>
+                {/*
+                  The same total the footer bar counts against: foliate's
+                  SectionProgress derives it from the spine's byte sizes when the
+                  book is opened (reflowable), or from the spine length for fixed
+                  layout. Nothing computes it at import time, so it lands in
+                  book.progress ([current, total]) on the first open (#5516).
+                */}
+                <div className='overflow-hidden pe-1 text-end sm:text-start'>
+                  <span className='font-bold'>{_('Pages')}</span>
+                  <p className='text-neutral-content text-sm'>
+                    {book.progress?.[1] || _('Unknown')}
+                  </p>
+                </div>
+                <div className='col-span-2 overflow-hidden sm:col-span-1'>
+                  <span className='font-bold'>{_('Identifier')}</span>
+                  <p className='text-neutral-content line-clamp-1 text-sm'>
+                    {metadata?.identifier || _('Unknown')}
+                  </p>
+                </div>
+                {/*
+                  Calibre custom columns embedded in the OPF (#4811). Column
+                  names are user content, not translation keys. The identifier
+                  cell above spans the full row on mobile, so alternate the
+                  end-aligned style from a fresh even/odd count here.
+                */}
+                {metadata?.calibreColumns?.map((column, index) => (
+                  <div
+                    key={column.label}
+                    className={clsx(
+                      'overflow-hidden',
+                      index % 2 === 1 && 'pe-1 text-end sm:text-start',
+                    )}
+                  >
+                    <span className='font-bold'>{column.name}</span>
+                    <p className='text-neutral-content line-clamp-3 text-sm'>
+                      {formatCalibreColumnValue(column)}
+                    </p>
+                  </div>
+                ))}
+                {/*
+                  Only books imported in-place (or files opened directly via the
+                  OS, e.g. Android "Open with Readest") keep a `filePath`; books
+                  copied into Books/<hash>/ have it left undefined. Surfacing the
+                  path lets the user verify which on-disk file the entry points at
+                  and tell apart in-place vs hash-copy imports at a glance.
+                */}
+                {book.filePath && (
+                  <div className='col-span-2 overflow-hidden sm:col-span-3'>
+                    <span className='font-bold'>{_('File Path')}</span>
+                    <p className='text-neutral-content text-sm break-all' title={book.filePath}>
+                      {book.filePath}
+                    </p>
+                  </div>
+                )}
+                {/*
+                  Subjects and Tags are full-width chip lists, so they close out
+                  the section: leaving them mid-grid pushed every following cell
+                  onto a fresh row and left holes in the two-column layout.
+                */}
+                <div className='col-span-2 overflow-hidden sm:col-span-3'>
+                  <div className='flex items-center gap-1'>
+                    <span className='font-bold'>{_('Subjects')}</span>
+                    {subjects.length > 3 && (
+                      <button
+                        type='button'
+                        aria-label={_('Subjects')}
+                        aria-expanded={subjectsExpanded}
+                        onClick={() => setSubjectsExpanded((expanded) => !expanded)}
+                      >
+                        {subjectsExpanded ? <MdExpandLess /> : <MdExpandMore />}
+                      </button>
+                    )}
+                  </div>
+                  <div className='mt-1 flex flex-wrap gap-1'>
+                    {visibleSubjects.length
+                      ? visibleSubjects.map((subject) => renderMetadataChip('subject', subject))
+                      : _('Unknown')}
+                  </div>
+                </div>
+                <div className='col-span-2 overflow-hidden sm:col-span-3'>
+                  <span className='font-bold'>{_('Tags')}</span>
+                  <div className='mt-1 flex flex-wrap gap-1'>
+                    {book.tags?.length
+                      ? book.tags.map((tag) => renderMetadataChip('tag', tag))
+                      : _('Unknown')}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+        <div className='metadata-series'>
+          <button
+            className={clsx(
+              'flex w-full items-center justify-between px-4 py-3 text-left transition-colors',
+              settings.metadataSeriesCollapsed ? 'hover:bg-base-200 rounded-lg' : '',
+            )}
+            onClick={toggleSeriesCollapse}
+          >
+            <span className='text-neutral-content/85 text-base font-semibold'>{_('Series')}</span>
+            <div className='transition-transform duration-200'>
+              {settings.metadataSeriesCollapsed ? (
+                <MdExpandMore className='h-5 w-5' />
+              ) : (
+                <MdExpandLess className='h-5 w-5' />
+              )}
+            </div>
+          </button>
+          {!settings.metadataSeriesCollapsed && (
+            <div className='px-4 py-1'>
+              <div className='grid grid-cols-2 gap-4 sm:grid-cols-3'>
+                <div className='overflow-hidden sm:col-span-2'>
+                  <span className='font-bold'>{_('Series')}</span>
+                  <p className='text-neutral-content text-sm'>{metadata?.series || _('Unknown')}</p>
+                </div>
+                <div className='overflow-hidden pe-1 text-end'>
+                  <span className='font-bold'>{_('Series Index')}</span>
+                  <p className='text-neutral-content text-sm'>
+                    {metadata?.seriesIndex || _('Unknown')}
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+        <div className='metadata-description'>
+          <button
+            className={clsx(
+              'flex w-full items-center justify-between rounded-lg px-4 py-3 text-left transition-colors',
+              settings.metadataDescriptionCollapsed ? 'hover:bg-base-200' : '',
+            )}
+            onClick={toggleDescriptionCollapse}
+          >
+            <span className='text-neutral-content/85 text-base font-semibold'>
+              {_('Description')}
+            </span>
+            <div className='transition-transform duration-200'>
+              {settings.metadataDescriptionCollapsed ? (
+                <MdExpandMore className='h-5 w-5' />
+              ) : (
+                <MdExpandLess className='h-5 w-5' />
+              )}
+            </div>
+          </button>
+          {!settings.metadataDescriptionCollapsed && (
+            <div className='px-4 py-1'>
+              <p
+                className='text-neutral-content prose prose-sm max-w-full whitespace-pre-line text-sm'
+                dangerouslySetInnerHTML={{
+                  __html: metadata?.description || _('No description available'),
+                }}
+              ></p>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default BookDetailView;

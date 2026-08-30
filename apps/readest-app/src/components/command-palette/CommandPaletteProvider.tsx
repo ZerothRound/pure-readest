@@ -1,0 +1,230 @@
+'use client';
+
+import React, { createContext, useContext, useState, useCallback, useMemo } from 'react';
+import { useTranslation } from '@/hooks/useTranslation';
+import { useSettingsStore } from '@/store/settingsStore';
+import { useThemeStore } from '@/store/themeStore';
+import { useEnv } from '@/context/EnvContext';
+import { isTauriAppPlatform } from '@/services/environment';
+import { tauriHandleSetAlwaysOnTop, tauriHandleToggleFullScreen } from '@/utils/window';
+import { nextThemeMode } from '@/utils/ambientLight';
+import { setAboutDialogVisible } from '@/components/AboutWindow';
+import { saveSysSettings } from '@/helpers/settings';
+import { SettingsPanelType } from '@/components/settings/SettingsDialog';
+import {
+  CommandItem,
+  buildCommandRegistry,
+  searchCommands,
+  CommandSearchResult,
+  groupResultsByCategory,
+  trackCommandUsage,
+  getRecentCommands,
+  CommandCategory,
+} from '@/services/commandRegistry';
+import useShortcuts from '@/hooks/useShortcuts';
+
+interface CommandPaletteContextValue {
+  isOpen: boolean;
+  open: () => void;
+  close: () => void;
+  toggle: () => void;
+  query: string;
+  setQuery: (query: string) => void;
+  results: CommandSearchResult[];
+  groupedResults: Record<CommandCategory, CommandSearchResult[]>;
+  recentItems: CommandItem[];
+  executeCommand: (item: CommandItem) => void;
+  commandItems: CommandItem[];
+}
+
+const CommandPaletteContext = createContext<CommandPaletteContextValue | null>(null);
+
+export const useCommandPalette = (): CommandPaletteContextValue => {
+  const context = useContext(CommandPaletteContext);
+  if (!context) {
+    throw new Error('useCommandPalette must be used within CommandPaletteProvider');
+  }
+  return context;
+};
+
+interface CommandPaletteProviderProps {
+  children: React.ReactNode;
+}
+
+export const CommandPaletteProvider: React.FC<CommandPaletteProviderProps> = ({ children }) => {
+  const _ = useTranslation();
+  const { envConfig, appService } = useEnv();
+  const { themeMode, setThemeMode } = useThemeStore();
+  const { settings, setSettingsDialogOpen, setActiveSettingsItemId } = useSettingsStore();
+
+  const [isOpen, setIsOpen] = useState(false);
+  const [query, setQuery] = useState('');
+
+  const isDesktop = isTauriAppPlatform() && !appService?.isMobile;
+
+  // action handlers
+  const toggleTheme = useCallback(() => {
+    setThemeMode(nextThemeMode(themeMode, !!appService?.hasAmbientLightSensor));
+  }, [themeMode, setThemeMode, appService?.hasAmbientLightSensor]);
+
+  const toggleFullscreen = useCallback(() => {
+    tauriHandleToggleFullScreen();
+  }, []);
+
+  const toggleAlwaysOnTop = useCallback(() => {
+    const newValue = !settings.alwaysOnTop;
+    saveSysSettings(envConfig, 'alwaysOnTop', newValue);
+    tauriHandleSetAlwaysOnTop(newValue);
+  }, [envConfig, settings.alwaysOnTop]);
+
+  const toggleScreenWakeLock = useCallback(() => {
+    const newValue = !settings.screenWakeLock;
+    saveSysSettings(envConfig, 'screenWakeLock', newValue);
+  }, [envConfig, settings.screenWakeLock]);
+
+  const reloadPage = useCallback(() => {
+    window.location.reload();
+  }, []);
+
+  const toggleOpenLastBooks = useCallback(() => {
+    const newValue = !settings.openLastBooks;
+    saveSysSettings(envConfig, 'openLastBooks', newValue);
+  }, [envConfig, settings.openLastBooks]);
+
+  const showAbout = useCallback(() => {
+    setAboutDialogVisible(true);
+  }, []);
+
+  const toggleTelemetry = useCallback(() => {
+    const newValue = !settings.telemetryEnabled;
+    saveSysSettings(envConfig, 'telemetryEnabled', newValue);
+  }, [envConfig, settings.telemetryEnabled]);
+
+  const openSettingsPanel = useCallback(
+    (_panel: SettingsPanelType, itemId?: string) => {
+      // panel is encoded in itemId (e.g., 'settings.font.defaultFontSize')
+      // SettingsDialog will parse this to determine which panel to show
+      if (itemId) {
+        setActiveSettingsItemId(itemId);
+      }
+      setSettingsDialogOpen(true);
+    },
+    [setSettingsDialogOpen, setActiveSettingsItemId],
+  );
+
+  // build command registry
+  const commandItems = useMemo(
+    () =>
+      buildCommandRegistry({
+        _,
+        openSettingsPanel,
+        toggleTheme,
+        toggleFullscreen,
+        toggleAlwaysOnTop,
+        toggleScreenWakeLock,
+        reloadPage,
+        toggleOpenLastBooks,
+        showAbout,
+        toggleTelemetry,
+        isDesktop,
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [
+      _,
+      openSettingsPanel,
+      toggleTheme,
+      toggleFullscreen,
+      toggleAlwaysOnTop,
+      toggleScreenWakeLock,
+      reloadPage,
+      toggleOpenLastBooks,
+      showAbout,
+      toggleTelemetry,
+      isDesktop,
+    ],
+  );
+
+  // search results
+  const results = useMemo(() => searchCommands(query, commandItems), [query, commandItems]);
+  const groupedResults = useMemo(() => groupResultsByCategory(results), [results]);
+
+  // recent items
+  const recentItems = useMemo(() => getRecentCommands(commandItems, 5), [commandItems]);
+
+  // palette controls
+  const open = useCallback(() => {
+    setIsOpen(true);
+    setQuery('');
+  }, []);
+
+  const close = useCallback(() => {
+    setIsOpen(false);
+    setQuery('');
+  }, []);
+
+  const toggle = useCallback(() => {
+    if (isOpen) {
+      close();
+    } else {
+      open();
+    }
+  }, [isOpen, open, close]);
+
+  // execute command
+  const executeCommand = useCallback(
+    (item: CommandItem) => {
+      trackCommandUsage(item.id);
+      close();
+      // slight delay to allow modal to close before action
+      requestAnimationFrame(() => {
+        item.action();
+      });
+    },
+    [close],
+  );
+
+  useShortcuts(
+    {
+      onOpenCommandPalette: () => {
+        setSettingsDialogOpen(false);
+        toggle();
+        return true;
+      },
+    },
+    [toggle, setSettingsDialogOpen],
+    { allowInInputs: true, capture: true, requireModifierInInputs: true },
+  );
+
+  const value = useMemo(
+    () => ({
+      isOpen,
+      open,
+      close,
+      toggle,
+      query,
+      setQuery,
+      results,
+      groupedResults,
+      recentItems,
+      executeCommand,
+      commandItems,
+    }),
+    [
+      isOpen,
+      open,
+      close,
+      toggle,
+      query,
+      setQuery,
+      results,
+      groupedResults,
+      recentItems,
+      executeCommand,
+      commandItems,
+    ],
+  );
+
+  return <CommandPaletteContext.Provider value={value}>{children}</CommandPaletteContext.Provider>;
+};
+
+export default CommandPaletteProvider;

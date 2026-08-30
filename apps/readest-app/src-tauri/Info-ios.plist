@@ -1,0 +1,122 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>Readest uses the local network to discover nearby devices and transfer books with Nearby BookDrop.</string>
+    <key>CFBundleLocalizations</key>
+    <array>
+      <string>en</string>
+      <string>ar</string>
+      <string>bn</string>
+      <string>bo</string>
+      <string>de</string>
+      <string>el</string>
+      <string>es</string>
+      <string>fa</string>
+      <string>fr</string>
+      <string>he</string>
+      <string>hi</string>
+      <string>hu</string>
+      <string>id</string>
+      <string>it</string>
+      <string>ja</string>
+      <string>ko</string>
+      <string>ms</string>
+      <string>nl</string>
+      <string>pl</string>
+      <string>pt-PT</string>
+      <string>pt-BR</string>
+      <string>ro</string>
+      <string>ru</string>
+      <string>si</string>
+      <string>sl</string>
+      <string>sv</string>
+      <string>ta</string>
+      <string>th</string>
+      <string>tr</string>
+      <string>uk</string>
+      <string>uz</string>
+      <string>vi</string>
+      <string>zh-Hans</string>
+      <string>zh-Hant</string>
+    </array>
+    <key>LSSupportsOpeningDocumentsInPlace</key>
+    <true/>
+    <!-- Add-only Photos access. Readest never reads the library, but the
+         WebView's "Add to Photos" image callout and the share sheet's
+         "Save Image" activity both write through PHPhotoLibrary in-process;
+         without this key TCC terminates the app on the first attempt (#5397)
+         and iOS hides "Save Image" from the share sheet entirely. -->
+    <key>NSPhotoLibraryAddUsageDescription</key>
+    <string>Readest needs access to save images from your books to your photo library.</string>
+    <key>CFBundleURLTypes</key>
+    <array>
+      <dict>
+        <key>CFBundleURLName</key>
+        <string>com.bilingify.readest</string>
+        <key>CFBundleURLSchemes</key>
+        <array>
+          <string>readest</string>
+        </array>
+      </dict>
+      <!-- Google Drive OAuth reverse-DNS redirect (iOS-type client). The
+           ASWebAuthenticationSession matches on this scheme; mirrors the
+           gdrive-oauth filter in AndroidManifest.xml and the deep-link.mobile
+           scheme in tauri.conf.json. -->
+      <dict>
+        <key>CFBundleURLName</key>
+        <string>com.googleusercontent.apps.gdrive-oauth</string>
+        <key>CFBundleURLSchemes</key>
+        <array>
+          <string>com.googleusercontent.apps.209390247301-ctpmep68ppfa56r1b8tr35e4qi4p60kq</string>
+        </array>
+      </dict>
+      <!-- OneDrive OAuth redirect. The ASWebAuthenticationSession matches on
+           this scheme; mirrors the onedrive-oauth filter in
+           AndroidManifest.xml and the deep-link.mobile scheme in
+           tauri.conf.json. -->
+      <dict>
+        <key>CFBundleURLName</key>
+        <string>com.bilingify.readest.onedrive-oauth</string>
+        <key>CFBundleURLSchemes</key>
+        <array>
+          <string>readest-onedrive</string>
+        </array>
+      </dict>
+    </array>
+    <key>UIApplicationSceneManifest</key>
+    <dict>
+      <key>UIApplicationSupportsMultipleScenes</key>
+      <true/>
+      <key>UISceneConfigurations</key>
+      <dict>
+        <key>CPTemplateApplicationSceneSessionRoleApplication</key>
+        <array>
+          <dict>
+            <key>UISceneClassName</key>
+            <string>CPTemplateApplicationScene</string>
+            <key>UISceneConfigurationName</key>
+            <string>CarPlay</string>
+            <key>UISceneDelegateClassName</key>
+            <string>$(PRODUCT_MODULE_NAME).CarPlaySceneDelegate</string>
+          </dict>
+        </array>
+      </dict>
+    </dict>
+    <key>NSUbiquitousContainers</key>
+    <dict>
+      <key>iCloud.com.bilingify.readest</key>
+      <dict>
+        <key>NSUbiquitousContainerIsDocumentScopePublic</key>
+        <true/>
+        <key>NSUbiquitousContainerName</key>
+        <string>Readest</string>
+        <key>NSUbiquitousContainerSupportedFolderLevels</key>
+        <string>Any</string>
+      </dict>
+    </dict>
+  </dict>
+</plist>

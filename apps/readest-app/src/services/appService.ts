@@ -1,0 +1,669 @@
+import { SystemSettings } from '@/types/settings';
+import { applySyncBooksAutoEnable } from '@/services/sync/cloudSyncProvider';
+import {
+  AppPlatform,
+  AppService,
+  BaseDir,
+  DeleteAction,
+  type DictionaryImportProgressHandler,
+  DistChannel,
+  FileInfo,
+  FileItem,
+  FileSystem,
+  OsPlatform,
+  ResolvedPath,
+  SaveLibraryBooksOptions,
+  SelectDirectoryMode,
+} from '@/types/system';
+import { DatabaseOpts, DatabaseService } from '@/types/database';
+import { SchemaType } from '@/services/database/migrate';
+import { Book, BookConfig, BookContent, ImportBookOptions, ViewSettings } from '@/types/book';
+import type { BookNav } from '@/services/nav';
+import { getLibraryFilename, getLibraryBackupFilename } from '@/utils/book';
+import { getDirPath, getFilename } from '@/utils/path';
+
+import { getOSPlatform } from '@/utils/misc';
+import { isStoragePermissionError, requestStoragePermission } from '@/utils/permission';
+import { ProgressHandler } from '@/utils/transfer';
+import { CustomTextureInfo } from '@/styles/textures';
+import { CustomFont, CustomFontInfo } from '@/styles/fonts';
+import type { ImportedDictionary } from './dictionaries/types';
+import type { SelectedFile } from '@/hooks/useFileSelector';
+
+import * as BookSvc from './bookService';
+import * as CloudSvc from './cloudService';
+import * as DictSvc from './dictionaries/dictionaryService';
+import * as FontSvc from './fontService';
+import * as ImageSvc from './imageService';
+import * as LibrarySvc from './libraryService';
+import * as Settings from './settingsService';
+import {
+  loadFeeds as loadFeedsFromDisk,
+  saveFeeds as saveFeedsToDisk,
+} from '@/services/rss/feedPersistence';
+import type { RssFeed } from '@/types/rss';
+
+export abstract class BaseAppService implements AppService {
+  osPlatform: OsPlatform = getOSPlatform();
+  appPlatform: AppPlatform = 'tauri';
+  localBooksDir = '';
+  unavailableRootDir: string | null = null;
+  isMobile = false;
+  isMacOSApp = false;
+  isLinuxApp = false;
+  isAppDataSandbox = false;
+  isAndroidApp = false;
+  isIOSApp = false;
+  isWindowsApp = false;
+  isMobileApp = false;
+  isPortableApp = false;
+  isDesktopApp = false;
+  isAppImage = false;
+  isEink = false;
+  hasTrafficLight = false;
+  hasWindow = false;
+  hasWindowBar = false;
+  hasContextMenu = false;
+  hasRoundedWindow = false;
+  hasSafeAreaInset = false;
+  hasHaptics = false;
+  hasUpdater = false;
+  hasOrientationLock = false;
+  hasScreenBrightness = false;
+  hasAmbientLightSensor = false;
+  canCustomizeRootDir = false;
+  canReadExternalDir = false;
+  supportsCoverThumbnailOptimization = false;
+  supportsCanvasContext2DFilter = true;
+  supportsViewTransitionsAPI = false;
+  supportsViewTransitionGroup = false;
+  distChannel = 'readest' as DistChannel;
+  storefrontRegionCode: string | null = null;
+  isOnlineCatalogsAccessible = true;
+
+  protected CURRENT_MIGRATION_VERSION = 20260706;
+
+  protected abstract fs: FileSystem;
+  protected abstract resolvePath(fp: string, base: BaseDir): ResolvedPath;
+
+  abstract init(): Promise<void>;
+  abstract setCustomRootDir(customRootDir: string): Promise<void>;
+  abstract selectDirectory(mode: SelectDirectoryMode): Promise<string>;
+  abstract selectFiles(name: string, extensions: string[]): Promise<string[]>;
+  abstract saveFile(
+    filename: string,
+    content: string | ArrayBuffer | null,
+    options?: {
+      filePath?: string;
+      mimeType?: string;
+      share?: boolean;
+      sharePosition?: { x: number; y: number; preferredEdge?: 'top' | 'bottom' | 'left' | 'right' };
+    },
+  ): Promise<boolean>;
+  abstract saveImageToGallery(
+    filename: string,
+    content: ArrayBuffer,
+    mimeType: string,
+  ): Promise<boolean>;
+  abstract ask(message: string): Promise<boolean>;
+  abstract openDatabase(
+    schema: SchemaType,
+    path: string,
+    base: BaseDir,
+    opts?: DatabaseOpts,
+  ): Promise<DatabaseService>;
+  async installDatabase(path: string, base: BaseDir, source: File): Promise<void> {
+    await this.writeFile(path, base, source);
+  }
+
+  // Databases live at the resolved fs path on native and node; the web app
+  // overrides both because its databases live in OPFS under flattened names,
+  // invisible to the IndexedDB-backed fs layer.
+  async databaseExists(path: string, base: BaseDir): Promise<boolean> {
+    return this.fs.exists(path, base);
+  }
+
+  async deleteDatabase(path: string, base: BaseDir): Promise<void> {
+    await this.fs.removeFile(path, base).catch(() => {});
+    await this.fs.removeFile(`${path}-wal`, base).catch(() => {});
+  }
+
+  protected async runMigrations(
+    lastMigrationVersion: number,
+    settings?: SystemSettings,
+  ): Promise<void> {
+    if (lastMigrationVersion < 20251124) {
+      try {
+        await this.migrate20251124();
+      } catch (error) {
+        console.error('Error migrating to version 20251124:', error);
+      }
+    }
+    if (lastMigrationVersion < 20260706 && settings) {
+      try {
+        this.migrate20260706(settings);
+      } catch (error) {
+        console.error('Error migrating to version 20260706:', error);
+      }
+    }
+  }
+
+  /**
+   * Users with WebDAV/Drive already enabled had native Readest Cloud uploads
+   * gated off when cloud sync provider selection shipped; flip syncBooks on
+   * once for every enabled third-party backend so their books keep backing up
+   * somewhere. This force-enables syncBooks a single time even for a user who
+   * had explicitly turned it off — intentional, since the alternative is books
+   * backing up nowhere. Mutates the caller's settings snapshot, which the
+   * caller persists together with migrationVersion.
+   */
+  private migrate20260706(settings: SystemSettings): void {
+    if (applySyncBooksAutoEnable(settings)) {
+      console.log('Migration 20260706: enabled syncBooks for enabled cloud sync backends.');
+    }
+  }
+
+  private async migrate20251124(): Promise<void> {
+    console.log('Running migration for version 20251124 to rename the backup library file...');
+    const oldBackupFilename = getLibraryBackupFilename();
+    const newBackupFilename = `${getLibraryFilename()}.bak`;
+    if (await this.fs.exists(oldBackupFilename, 'Books')) {
+      try {
+        const content = await this.fs.readFile(oldBackupFilename, 'Books', 'text');
+        await this.fs.writeFile(newBackupFilename, 'Books', content);
+        await this.fs.removeFile(oldBackupFilename, 'Books');
+        console.log('Migration to rename backup library file completed successfully.');
+      } catch (error) {
+        console.error('Error during migration to rename backup library file:', error);
+      }
+    }
+  }
+
+  async prepareBooksDir() {
+    this.localBooksDir = await this.fs.getPrefix('Books');
+  }
+
+  /**
+   * A user-configured library root is untrusted input: the folder can be
+   * deleted, live on an unplugged drive, or — under the macOS App Sandbox —
+   * be a path the kernel refuses outright. Probe it once at startup so a bad
+   * root is reported rather than thrown deep inside the first library read,
+   * where the rejection had nothing to catch it and left the app on a blank
+   * page. Never throws; the answer is the return value.
+   */
+  async isRootDirUsable(): Promise<boolean> {
+    try {
+      if (!(await this.fs.exists('', 'Books'))) {
+        await this.fs.createDir('', 'Books', true);
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async openFile(path: string, base: BaseDir): Promise<File> {
+    return await this.fs.openFile(path, base);
+  }
+
+  async copyFile(
+    srcPath: string,
+    srcBase: BaseDir,
+    dstPath: string,
+    dstBase: BaseDir,
+  ): Promise<void> {
+    return await this.fs.copyFile(srcPath, srcBase, dstPath, dstBase);
+  }
+
+  async readFile(path: string, base: BaseDir, mode: 'text' | 'binary') {
+    return await this.fs.readFile(path, base, mode);
+  }
+
+  async writeFile(path: string, base: BaseDir, content: string | ArrayBuffer | File) {
+    return await this.fs.writeFile(path, base, content);
+  }
+
+  async createDir(path: string, base: BaseDir, recursive: boolean = true): Promise<void> {
+    return await this.fs.createDir(path, base, recursive);
+  }
+
+  async deleteFile(path: string, base: BaseDir): Promise<void> {
+    return await this.fs.removeFile(path, base);
+  }
+
+  async deleteDir(path: string, base: BaseDir, recursive: boolean = true): Promise<void> {
+    return await this.fs.removeDir(path, base, recursive);
+  }
+
+  async resolveFilePath(path: string, base: BaseDir): Promise<string> {
+    const prefix = await this.fs.getPrefix(base);
+    if (!path) return prefix;
+    // `base: 'None'` carries an already-absolute source path (in-place /
+    // external books point `book.filePath` outside Books/<hash>/) and its
+    // prefix is empty. Joining unconditionally turned `C:\Users\…` into
+    // `/C:\Users\…` (and `/Users/…` into `//Users/…`), which the native
+    // upload guard rejects as outside the fs scope — issue #4720.
+    return prefix ? `${prefix}/${path}` : path;
+  }
+
+  async readDirectory(path: string, base: BaseDir, extensions?: string[]): Promise<FileItem[]> {
+    return await this.fs.readDir(path, base, extensions);
+  }
+
+  async exists(path: string, base: BaseDir): Promise<boolean> {
+    return await this.fs.exists(path, base);
+  }
+
+  async isDirectory(path: string, base: BaseDir): Promise<boolean> {
+    try {
+      const info = await this.fs.stats(path, base);
+      return info.isDirectory;
+    } catch {
+      return false;
+    }
+  }
+
+  async stats(path: string, base: BaseDir): Promise<FileInfo> {
+    return await this.fs.stats(path, base);
+  }
+
+  async getImageURL(path: string): Promise<string> {
+    return await this.fs.getImageURL(path);
+  }
+
+  private get settingsCtx(): Settings.Context {
+    return {
+      fs: this.fs,
+      isMobile: this.isMobile,
+      isEink: this.isEink,
+      isAppDataSandbox: this.isAppDataSandbox,
+    };
+  }
+
+  private get coverCtx(): BookSvc.CoverContext {
+    return { fs: this.fs, appPlatform: this.appPlatform, localBooksDir: this.localBooksDir };
+  }
+
+  getDefaultViewSettings(): ViewSettings {
+    return Settings.getDefaultViewSettings(this.settingsCtx);
+  }
+
+  async loadSettings(): Promise<SystemSettings> {
+    const settings = await Settings.loadSettings(this.settingsCtx);
+    this.localBooksDir = settings.localBooksDir;
+    return settings;
+  }
+
+  async saveSettings(settings: SystemSettings): Promise<void> {
+    await Settings.saveSettings(this.fs, settings);
+  }
+
+  getCoverImageUrl = (book: Book): string => BookSvc.getCoverImageUrl(this.coverCtx, book);
+
+  getCoverImageBlobUrl = async (book: Book): Promise<string> =>
+    BookSvc.getCoverImageBlobUrl(this.coverCtx, book);
+
+  async getCachedImageUrl(pathOrUrl: string): Promise<string> {
+    return BookSvc.getCachedImageUrl(this.coverCtx, pathOrUrl);
+  }
+
+  async generateCoverImageUrl(book: Book): Promise<string> {
+    return BookSvc.generateCoverImageUrl(this.coverCtx, book);
+  }
+
+  async updateCoverImage(book: Book, imageUrl?: string, imageFile?: string): Promise<void> {
+    return BookSvc.updateCoverImage(this.coverCtx, book, imageUrl, imageFile);
+  }
+
+  async computeCoverHash(book: Book): Promise<string | null> {
+    return BookSvc.computeCoverHash(this.fs, book);
+  }
+
+  async importFont(file?: string | File): Promise<CustomFontInfo | null> {
+    return FontSvc.importFont(this.fs, file);
+  }
+
+  async deleteFont(font: CustomFont): Promise<void> {
+    return FontSvc.deleteFont(this.fs, font);
+  }
+
+  async importImage(file?: string | File): Promise<CustomTextureInfo | null> {
+    return ImageSvc.importImage(this.fs, file);
+  }
+
+  async deleteImage(texture: CustomTextureInfo): Promise<void> {
+    return ImageSvc.deleteImage(this.fs, texture);
+  }
+
+  async importDictionaries(
+    files: SelectedFile[],
+    existingDictionaries: ImportedDictionary[] = [],
+    onProgress?: DictionaryImportProgressHandler,
+  ): Promise<DictSvc.ImportDictionariesResult> {
+    const { importPluginDictionaries } = await import('./dictionaries/plugins/import');
+    const pluginResult = await importPluginDictionaries(this, files, existingDictionaries, {
+      ...(onProgress ? { onProgress } : {}),
+    });
+    const replacedPluginIds = new Set(
+      pluginResult.replacements.flatMap((replacement) => replacement.oldIds),
+    );
+    const dictionariesForLegacyImport = [
+      ...existingDictionaries.filter((dictionary) => !replacedPluginIds.has(dictionary.id)),
+      ...pluginResult.imported,
+      ...pluginResult.replacements.map((replacement) => replacement.newDict),
+    ];
+    let legacyResult: DictSvc.ImportDictionariesResult;
+    try {
+      legacyResult = await DictSvc.importDictionaries(
+        this.fs,
+        pluginResult.unclaimed,
+        dictionariesForLegacyImport,
+      );
+    } catch (error) {
+      const name =
+        pluginResult.unclaimed
+          .map(
+            (selected) =>
+              selected.file?.name ??
+              selected.name ??
+              (selected.path ? getFilename(selected.path) : undefined),
+          )
+          .filter((value): value is string => Boolean(value))
+          .join(', ') || 'Selected dictionaries';
+      return {
+        imported: pluginResult.imported,
+        replacements: pluginResult.replacements,
+        orphanFiles: [],
+        importErrors: [
+          ...pluginResult.failures,
+          { name, message: error instanceof Error ? error.message : String(error) },
+        ],
+      };
+    }
+    return {
+      imported: [...pluginResult.imported, ...legacyResult.imported],
+      replacements: [...pluginResult.replacements, ...legacyResult.replacements],
+      orphanFiles: legacyResult.orphanFiles,
+      ...(pluginResult.failures.length === 0 ? {} : { importErrors: pluginResult.failures }),
+    };
+  }
+
+  async deleteDictionary(dict: ImportedDictionary): Promise<void> {
+    if (dict.kind === 'plugin') {
+      const [{ evictProvider }, { getDictionaryPluginControlStore }] = await Promise.all([
+        import('./dictionaries/registry'),
+        import('./dictionaries/plugins/controlService'),
+      ]);
+      evictProvider(dict.id);
+      const controlStore = await getDictionaryPluginControlStore(this);
+      await controlStore.removeDictionary(dict.id);
+    }
+    return DictSvc.deleteDictionary(this.fs, dict);
+  }
+
+  async importBook(
+    file: string | File,
+    books: Book[],
+    options: ImportBookOptions = {},
+  ): Promise<Book | null> {
+    return BookSvc.importBook(this.fs, file, books, {
+      saveBookConfig: this.saveBookConfig.bind(this),
+      generateCoverImageUrl: this.generateCoverImageUrl.bind(this),
+      // Pass the host platform through so the in-place fast path and the
+      // lookup index can normalize source paths consistently on
+      // case-insensitive filesystems (macOS / iOS / Windows).
+      osPlatform: this.osPlatform,
+      ...options,
+    });
+  }
+
+  async deleteBook(book: Book, deleteAction: DeleteAction): Promise<void> {
+    const loadTTSCleanup = async () => {
+      const [downloads, cache, sessions] = await Promise.all([
+        import('@/services/tts/ttsDownloadManager'),
+        import('@/services/tts/providers/bookCacheStore'),
+        import('@/services/tts/TTSSessionManager'),
+      ]);
+      return {
+        downloadManager: downloads.ttsDownloadManager,
+        clearDownloads: cache.clearBookTTSDownloads,
+        sessionManager: sessions.ttsSessionManager,
+      };
+    };
+    let ttsCleanup: Awaited<ReturnType<typeof loadTTSCleanup>> | undefined;
+
+    // Purge recursively removes the cache directory, so its open TTS database
+    // must be quiesced before the filesystem delete. Other local actions keep
+    // failure semantics unchanged and clean up only after their delete lands.
+    if (deleteAction === 'purge') {
+      ttsCleanup = await loadTTSCleanup();
+      await ttsCleanup.downloadManager.removeBook(book.hash);
+      await ttsCleanup.sessionManager.stopBook(book.hash, 'deleted');
+    }
+    await CloudSvc.deleteBook(this.fs, book, deleteAction);
+    if (deleteAction === 'cloud') return;
+    ttsCleanup ??= await loadTTSCleanup();
+
+    // Keep cleanup at the shared local-deletion boundary so library actions,
+    // sync-driven removal, and account purge all follow the same contract.
+    // The book deletion has already succeeded; cache housekeeping is
+    // best-effort and must not turn that success into a failed delete.
+    if (deleteAction !== 'purge') {
+      await ttsCleanup.downloadManager.removeBook(book.hash);
+      await ttsCleanup.sessionManager.stopBook(book.hash, 'deleted');
+    }
+    try {
+      await ttsCleanup.clearDownloads(this, book.hash);
+    } catch (err) {
+      console.warn('Failed to clear downloaded TTS audio for deleted book', err);
+    }
+  }
+
+  async uploadFileToCloud(
+    lfp: string,
+    cfp: string,
+    base: BaseDir,
+    handleProgress: ProgressHandler,
+    hash: string,
+    temp: boolean = false,
+    media?: string,
+  ) {
+    return CloudSvc.uploadFileToCloud(
+      this.fs,
+      this.resolveFilePath.bind(this),
+      lfp,
+      cfp,
+      base,
+      handleProgress,
+      hash,
+      temp,
+      media,
+    );
+  }
+
+  async uploadReplicaFile(
+    kind: string,
+    replicaId: string,
+    filename: string,
+    lfp: string,
+    base: BaseDir,
+    onProgress: ProgressHandler,
+  ) {
+    return CloudSvc.uploadReplicaFileToCloud(this.fs, this.resolveFilePath.bind(this), {
+      kind,
+      replicaId,
+      filename,
+      lfp,
+      base,
+      onProgress,
+    });
+  }
+
+  async downloadReplicaFile(
+    kind: string,
+    replicaId: string,
+    filename: string,
+    lfp: string,
+    base: BaseDir,
+    onProgress?: ProgressHandler,
+  ) {
+    // The native downloader writes with `File::create`, which does not create
+    // parent directories, so a missing bundle dir fails as an opaque
+    // "No such file or directory (os error 2)" (issue #5675). The pull path
+    // only mkdirs when it MINTS a bundle dir for a record it has never seen —
+    // a record whose directory was lost afterwards (custom root dir changed,
+    // external storage cleared), a transfer replayed from the persisted queue,
+    // and Retry All all arrive here with nothing on disk. Book downloads have
+    // always guarded this (see cloudService.downloadBook); do the same here.
+    // `createDir` is recursive, so this is a no-op when the dir exists.
+    const bundleDir = getDirPath(lfp);
+    if (bundleDir) {
+      await this.fs.createDir(bundleDir, base, true);
+    }
+    // Resolve the relative `<bundleDir>/<filename>` lfp against the
+    // replica's base dir before downloading. Mirrors how upload uses
+    // `resolveFilePath(opts.lfp, opts.base)`. Without this, the writer
+    // lands the bytes at the literal lfp (no base prefix) so subsequent
+    // openFile(lfp, base) calls fail with "File not found".
+    const dst = await this.resolveFilePath(lfp, base);
+    return CloudSvc.downloadReplicaFileFromCloud(this, {
+      kind,
+      replicaId,
+      filename,
+      dst,
+      onProgress,
+    });
+  }
+
+  async deleteReplicaBundle(kind: string, replicaId: string, filenames: string[]) {
+    return CloudSvc.deleteReplicaBundleFromCloud(kind, replicaId, filenames);
+  }
+
+  async uploadBook(book: Book, onProgress?: ProgressHandler): Promise<void> {
+    return CloudSvc.uploadBook(this.fs, this.resolveFilePath.bind(this), book, onProgress);
+  }
+
+  async uploadBookCover(book: Book, onProgress?: ProgressHandler): Promise<void> {
+    return CloudSvc.uploadBookCover(this.fs, this.resolveFilePath.bind(this), book, onProgress);
+  }
+
+  async downloadCloudFile(lfp: string, cfp: string, onProgress: ProgressHandler) {
+    return CloudSvc.downloadCloudFile(this, this.localBooksDir, lfp, cfp, onProgress);
+  }
+
+  async downloadBookCovers(books: Book[]): Promise<void> {
+    return CloudSvc.downloadBookCovers(this, this.fs, this.localBooksDir, books);
+  }
+
+  async downloadBook(
+    book: Book,
+    onlyCover = false,
+    redownload = false,
+    onProgress?: ProgressHandler,
+  ): Promise<void> {
+    return CloudSvc.downloadBook(
+      this,
+      this.fs,
+      this.localBooksDir,
+      book,
+      onlyCover,
+      redownload,
+      onProgress,
+    );
+  }
+
+  async exportBook(book: Book): Promise<boolean> {
+    return BookSvc.exportBook(
+      this.fs,
+      book,
+      this.resolveFilePath.bind(this),
+      this.copyFile.bind(this),
+      this.saveFile.bind(this),
+    );
+  }
+
+  async refreshBookMetadata(book: Book): Promise<boolean> {
+    return BookSvc.refreshBookMetadata(this.fs, book);
+  }
+
+  async isBookAvailable(book: Book): Promise<boolean> {
+    return BookSvc.isBookAvailable(this.fs, book);
+  }
+
+  async getBookFileSize(book: Book): Promise<number | null> {
+    return BookSvc.getBookFileSize(this.fs, book);
+  }
+
+  async loadBookContent(book: Book): Promise<BookContent> {
+    return BookSvc.loadBookContent(this.fs, book);
+  }
+
+  async resolveNativeBookFilePath(book: Book): Promise<string | null> {
+    return BookSvc.resolveNativeBookFilePath(this.fs, this.resolveFilePath.bind(this), book);
+  }
+
+  async loadBookConfig(book: Book, settings: SystemSettings): Promise<BookConfig> {
+    return BookSvc.loadBookConfig(this.fs, book, settings);
+  }
+
+  async fetchBookDetails(book: Book) {
+    return BookSvc.fetchBookDetails(this.fs, book, this.downloadBook.bind(this));
+  }
+
+  async saveBookConfig(book: Book, config: BookConfig, settings?: SystemSettings) {
+    return BookSvc.saveBookConfig(this.fs, book, config, settings);
+  }
+
+  async loadBookNav(book: Book) {
+    return BookSvc.loadBookNav(this.fs, book);
+  }
+
+  async saveBookNav(book: Book, nav: BookNav) {
+    return BookSvc.saveBookNav(this.fs, book, nav);
+  }
+
+  async loadFeeds(): Promise<RssFeed[]> {
+    return loadFeedsFromDisk(this.fs);
+  }
+
+  async saveFeeds(feeds: RssFeed[]): Promise<void> {
+    return saveFeedsToDisk(this.fs, feeds);
+  }
+
+  async loadLibraryBooks(): Promise<Book[]> {
+    return LibrarySvc.loadLibraryBooks(this.fs, this.generateCoverImageUrl.bind(this));
+  }
+
+  requestCoverThumbnail(_book: Book): void {
+    // Native apps override this. Web and Node already load appropriately sized
+    // cover sources and do not have the Tauri thumbnail worker.
+  }
+
+  // Prompt for storage permission at most once per session (see saveLibraryBooks).
+  private storagePermissionRequested = false;
+
+  async saveLibraryBooks(books: Book[], options?: SaveLibraryBooksOptions): Promise<void> {
+    try {
+      return await LibrarySvc.saveLibraryBooks(this.fs, books, options);
+    } catch (error) {
+      // A custom library folder on Android shared storage needs All Files
+      // Access. Without it the write fails with EACCES and, because callers
+      // (sync, imports) don't await/catch this, it surfaced as an unhandled
+      // rejection crash (Sentry READEST-A). Re-request the permission through
+      // the same flow used at import time and retry once. Only prompt once per
+      // session so background saves don't repeatedly yank the user to system
+      // settings; after that a still-denied save is logged, not crashed —
+      // the user was already shown the All Files Access screen.
+      if (!this.isAndroidApp || !isStoragePermissionError(error)) {
+        throw error;
+      }
+      if (!this.storagePermissionRequested) {
+        this.storagePermissionRequested = true;
+        if (await requestStoragePermission()) {
+          return await LibrarySvc.saveLibraryBooks(this.fs, books, options);
+        }
+      }
+      console.warn('[library] not saved: storage permission not granted', error);
+    }
+  }
+}

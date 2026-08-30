@@ -1,0 +1,73 @@
+import clsx from 'clsx';
+import { useRef } from 'react';
+import { MdInfoOutline } from 'react-icons/md';
+import { Book } from '@/types/book';
+import { useThemeStore } from '@/store/themeStore';
+import { useTranslation } from '@/hooks/useTranslation';
+import { eventDispatcher } from '@/utils/event';
+import { useResponsiveSize } from '@/hooks/useResponsiveSize';
+import { formatAuthors, formatTitle } from '@/utils/book';
+import BookCover from '@/components/BookCover';
+import BookCoverViewer, { useBookCoverViewer } from '@/components/BookCoverViewer';
+import { useBookDataStore } from '@/store/bookDataStore';
+import { useSettingsStore } from '@/store/settingsStore';
+import { useSidebarStore } from '@/store/sidebarStore';
+
+const BookCard = ({ book }: { book: Book }) => {
+  const { title, author } = book;
+  const _ = useTranslation();
+  const { settings } = useSettingsStore();
+  const { isDarkMode } = useThemeStore();
+  const iconSize18 = useResponsiveSize(18);
+  const bookCoverRef = useRef<HTMLButtonElement | null>(null);
+  const { coverSrc, openCoverViewer, closeCoverViewer } = useBookCoverViewer(book);
+
+  const showBookDetails = () => {
+    // `book` is the snapshot taken when the reader opened it, so its page count
+    // is the previous session's — and missing altogether on a first read. The
+    // live config carries the count for the layout on screen now (#5516).
+    const { sideBarBookKey } = useSidebarStore.getState();
+    const progress = useBookDataStore.getState().getConfig(sideBarBookKey)?.progress;
+    eventDispatcher.dispatchSync('show-book-details', progress ? { ...book, progress } : book);
+  };
+
+  return (
+    <div className='flex h-20 w-full items-center'>
+      <button
+        ref={bookCoverRef}
+        type='button'
+        aria-label={_('View Book Cover')}
+        className={clsx(
+          'me-4 aspect-[28/41] max-h-16 w-[15%] max-w-12 overflow-hidden rounded-xs shadow-md',
+          isDarkMode ? 'mix-blend-screen' : 'mix-blend-multiply',
+        )}
+        onClick={openCoverViewer}
+      >
+        <BookCover
+          book={book}
+          mode='list'
+          coverFit='crop'
+          showSpine={settings.librarySkeuomorphicCovers}
+          imageClassName='rounded-xs'
+          onImageError={() => (bookCoverRef.current!.style.display = 'none')}
+        />
+      </button>
+      {coverSrc && <BookCoverViewer src={coverSrc} onClose={closeCoverViewer} />}
+      <div className='min-w-0 flex-1'>
+        <h4 className='line-clamp-2 w-[90%] text-sm font-semibold'>
+          {formatTitle(title).replace(/\u00A0/g, ' ')}
+        </h4>
+        <p className='truncate text-xs opacity-75'>{formatAuthors(author)}</p>
+      </div>
+      <button
+        className='btn btn-ghost hover:bg-base-300 h-6 min-h-6 w-6 rounded-full p-0 transition-colors'
+        aria-label={_('More Info')}
+        onClick={showBookDetails}
+      >
+        <MdInfoOutline size={iconSize18} className='fill-base-content' />
+      </button>
+    </div>
+  );
+};
+
+export default BookCard;

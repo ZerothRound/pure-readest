@@ -1,0 +1,538 @@
+-- syncbooks_spec.lua
+-- Pure-function tests for library/syncbooks.lua. The network-touching parts
+-- (pullBooks, downloadBook, downloadCover) require Spore + httpclient +
+-- NetworkMgr + UIManager.looper at require-time and aren't unit-testable;
+-- they're covered by the manual matrix. These specs lock down the bits we
+-- CAN exercise in isolation: the cloud fileKey / local-filename builders
+-- that the UI tier depends on.
+
+require("spec_helper")
+
+describe("library.syncbooks", function()
+    local syncbooks
+
+    before_each(function()
+        package.loaded["library.syncbooks"] = nil
+        syncbooks = require("library.syncbooks")
+    end)
+
+    -- =====================================================================
+    -- build_file_key — cloud download fileKey for a book file
+    -- =====================================================================
+    describe("build_file_key", function()
+        it("returns the canonical {user_id}/Readest/Books/{hash}/{hash}.{ext} shape", function()
+            local key = syncbooks.build_file_key({
+                user_id = "u-alice",
+                hash = "abc123",
+                format = "EPUB",
+            })
+            assert.are.equal("u-alice/Readest/Books/abc123/abc123.epub", key)
+        end)
+
+        it("derives extension from format via library.exts", function()
+            local cases = {
+                EPUB = "epub", PDF = "pdf", MOBI = "mobi", AZW3 = "azw3",
+                CBZ = "cbz", FB2 = "fb2", TXT = "txt", MD = "md",
+            }
+            for fmt, ext in pairs(cases) do
+                local key = syncbooks.build_file_key({
+                    user_id = "u",
+                    hash    = "h",
+                    format  = fmt,
+                })
+                assert.are.equal("u/Readest/Books/h/h." .. ext, key,
+                    "wrong key for format " .. fmt)
+            end
+        end)
+
+        it("returns nil for an unknown format (caller decides what to do)", function()
+            local key = syncbooks.build_file_key({
+                user_id = "u",
+                hash    = "h",
+                format  = "ROT13",
+            })
+            assert.is_nil(key)
+        end)
+
+        it("returns nil when user_id is missing or empty", function()
+            assert.is_nil(syncbooks.build_file_key({ hash = "h", format = "EPUB" }))
+            assert.is_nil(syncbooks.build_file_key({ user_id = "", hash = "h", format = "EPUB" }))
+        end)
+
+        it("returns nil when hash is missing or empty", function()
+            assert.is_nil(syncbooks.build_file_key({ user_id = "u", format = "EPUB" }))
+            assert.is_nil(syncbooks.build_file_key({ user_id = "u", hash = "", format = "EPUB" }))
+        end)
+    end)
+
+    -- =====================================================================
+    -- build_cover_key — cloud download fileKey for a cover image
+    -- =====================================================================
+    describe("build_cover_key", function()
+        it("returns {user_id}/Readest/Books/{hash}/cover.png — same on R2 and S3", function()
+            local key = syncbooks.build_cover_key({ user_id = "u-bob", hash = "deadbeef" })
+            assert.are.equal("u-bob/Readest/Books/deadbeef/cover.png", key)
+        end)
+
+        it("returns nil with missing user_id or hash", function()
+            assert.is_nil(syncbooks.build_cover_key({ hash = "h" }))
+            assert.is_nil(syncbooks.build_cover_key({ user_id = "u" }))
+            assert.is_nil(syncbooks.build_cover_key({ user_id = "", hash = "h" }))
+            assert.is_nil(syncbooks.build_cover_key({ user_id = "u", hash = "" }))
+        end)
+    end)
+
+    -- =====================================================================
+    -- build_local_filename — what we save the cloud download as on disk
+    -- =====================================================================
+    -- Per design doc: local layout is FLAT (KOReader users prefer flat
+    -- dirs). Filename derived from source_title || title, sanitized for
+    -- filesystem-illegal chars. No JS-parity port required.
+    describe("build_local_filename", function()
+        it("uses source_title when present, else title", function()
+            assert.are.equal("Foundation.epub", syncbooks.build_local_filename({
+                title = "anything", source_title = "Foundation", format = "EPUB",
+            }))
+            assert.are.equal("Dune.pdf", syncbooks.build_local_filename({
+                title = "Dune", format = "PDF",
+            }))
+        end)
+
+        it("replaces filesystem-illegal chars with _ (FAT/NTFS-safe)", function()
+            assert.are.equal("Sci-Fi_Classics_Foundation.epub", syncbooks.build_local_filename({
+                title = "Sci-Fi/Classics/Foundation", format = "EPUB",
+            }))
+            assert.are.equal("Title_with_pipe_and_quote.epub", syncbooks.build_local_filename({
+                title = 'Title|with|pipe"and"quote', format = "EPUB",
+            }))
+        end)
+
+        it("strips control characters", function()
+            assert.are.equal("Foo_Bar.epub", syncbooks.build_local_filename({
+                title = "Foo\1Bar", format = "EPUB",
+            }))
+        end)
+
+        it("clamps long names (no Lua-side surprise on 1KB titles)", function()
+            local long = string.rep("a", 500)
+            local out = syncbooks.build_local_filename({ title = long, format = "EPUB" })
+            -- 200 byte body + ".epub" extension = 205 max
+            assert.is_true(#out <= 205, "filename too long: " .. #out)
+            assert.is_true(out:match("%.epub$") ~= nil, "extension lost")
+        end)
+
+        it("preserves UTF-8 (CJK + emoji) without mangling code points", function()
+            local out = syncbooks.build_local_filename({
+                title = "三体 — 第一部 📖", format = "EPUB",
+            })
+            -- Em dash is allowed; CJK + emoji preserved verbatim.
+            assert.is_true(out:match("三体") ~= nil)
+            assert.is_true(out:match("📖") ~= nil)
+            assert.is_true(out:match("%.epub$") ~= nil)
+        end)
+
+        it("returns 'book.{ext}' when title is empty/missing", function()
+            assert.are.equal("book.epub", syncbooks.build_local_filename({ format = "EPUB" }))
+            assert.are.equal("book.epub", syncbooks.build_local_filename({ title = "", format = "EPUB" }))
+        end)
+
+        it("returns nil for unknown format (matches build_file_key behavior)", function()
+            assert.is_nil(syncbooks.build_local_filename({ title = "X", format = "ROT13" }))
+        end)
+    end)
+
+    -- =====================================================================
+    -- _row_to_wire — converts our snake_case store row to the camelCase
+    -- Book the server expects on POST /sync. Locks the field mapping
+    -- against drift from transformBookToDB at
+    -- apps/readest-app/src/utils/transform.ts:66-105.
+    -- =====================================================================
+    describe("_row_to_wire", function()
+        it("maps snake_case row fields to camelCase wire fields", function()
+            local out = syncbooks._row_to_wire({
+                hash         = "h1",
+                meta_hash    = "m1",
+                format       = "EPUB",
+                title        = "Foundation",
+                source_title = "Foundation (Original)",
+                author       = "Asimov",
+                group_id     = "gid1",
+                group_name   = "Sci-Fi",
+                reading_status = "reading",
+                created_at   = 1700000000000,
+                updated_at   = 1770000000000,
+                deleted_at   = nil,
+                uploaded_at  = 1750000000000,
+            })
+            assert.are.equal("h1",         out.bookHash)
+            assert.are.equal("h1",         out.hash)
+            assert.are.equal("m1",         out.metaHash)
+            assert.are.equal("EPUB",       out.format)
+            assert.are.equal("Foundation", out.title)
+            assert.are.equal("Foundation (Original)", out.sourceTitle)
+            assert.are.equal("Asimov",     out.author)
+            assert.are.equal("gid1",       out.groupId)
+            assert.are.equal("Sci-Fi",     out.groupName)
+            assert.are.equal("reading",    out.readingStatus)
+            assert.are.equal(1700000000000, out.createdAt)
+            assert.are.equal(1770000000000, out.updatedAt)
+            assert.is_nil(out.deletedAt)
+            assert.are.equal(1750000000000, out.uploadedAt)
+        end)
+
+        it("parses metadata_json back to a table for the server", function()
+            local out = syncbooks._row_to_wire({
+                hash = "h1", title = "T",
+                metadata_json = '{"series":"Foundation","seriesIndex":1}',
+            })
+            assert.is_table(out.metadata)
+            assert.are.equal("Foundation", out.metadata.series)
+            assert.are.equal(1, out.metadata.seriesIndex)
+        end)
+
+        it("parses progress_lib back to a [cur, total] tuple", function()
+            local out = syncbooks._row_to_wire({
+                hash = "h1", title = "T",
+                progress_lib = "[42,250]",
+            })
+            assert.is_table(out.progress)
+            assert.are.equal(42,  out.progress[1])
+            assert.are.equal(250, out.progress[2])
+        end)
+
+        it("survives missing/malformed metadata + progress without crashing", function()
+            local out = syncbooks._row_to_wire({
+                hash = "h1", title = "T",
+                metadata_json = "{not valid json",
+                progress_lib  = "garbage",
+            })
+            assert.is_nil(out.metadata)
+            assert.is_nil(out.progress)
+        end)
+
+        it("returns nil for nil input (defensive)", function()
+            assert.is_nil(syncbooks._row_to_wire(nil))
+        end)
+
+        -- Regression (#5006): KOReader's require("json") is LuaJSON, whose
+        -- decoder represents a JSON null as a *function* sentinel
+        -- (json.util.null). The push payload is re-encoded by Spore with
+        -- dkjson, which raises "type 'function' is not supported by JSON" and
+        -- fails the whole pushChanges. row_to_wire must neutralise those
+        -- sentinels so the payload always re-encodes. The test harness swaps
+        -- in dkjson (which drops nulls) so we stub the LuaJSON behaviour here.
+        it("re-encodes cleanly when decoded metadata holds a JSON null (LuaJSON sentinel)", function()
+            local null_fn  -- LuaJSON: JSON null -> function sentinel
+            null_fn = function() return null_fn end
+            local prev_json = package.loaded["json"]
+            package.loaded["json"] = {
+                decode = function(_)
+                    return { series = "Foundation", published = null_fn }
+                end,
+            }
+            finally(function() package.loaded["json"] = prev_json end)
+
+            local out = syncbooks._row_to_wire({
+                hash = "h1", title = "T",
+                metadata_json = '{"series":"Foundation","published":null}',
+            })
+
+            -- The wire payload is serialized by Spore/dkjson; must not raise.
+            local dkjson = require("dkjson")
+            local ok, err = pcall(dkjson.encode, { books = { out }, notes = {}, configs = {} })
+            assert.is_true(ok, "payload must be dkjson-encodable: " .. tostring(err))
+            -- Null preserved as JSON null (byte-faithful to the wire), not a function.
+            assert.are_not.equal("function", type(out.metadata.published))
+            assert.are.equal(dkjson.null, out.metadata.published)
+            assert.are.equal("Foundation", out.metadata.series)
+        end)
+
+        it("emits readingStatusUpdatedAt in the wire payload", function()
+            local wire = syncbooks._row_to_wire({ hash = "h1", title = "T",
+                reading_status = "finished", reading_status_updated_at = 1750000000000 })
+            assert.are.equal("finished", wire.readingStatus)
+            assert.are.equal(1750000000000, wire.readingStatusUpdatedAt)
+        end)
+    end)
+
+    -- =====================================================================
+    -- resolve_collision — bumps {name}.ext → {name} (1).ext on collision
+    -- =====================================================================
+    -- Pure helper; takes a list of existing filenames + a candidate, returns
+    -- a non-colliding name. Real downloadBook calls lfs.attributes; this
+    -- helper takes a "does it exist" predicate so we can test it.
+    describe("resolve_collision", function()
+        it("returns the input when nothing collides", function()
+            local out = syncbooks.resolve_collision("Dune.epub", function() return false end)
+            assert.are.equal("Dune.epub", out)
+        end)
+
+        it("appends (1) on first collision", function()
+            local existing = { ["Dune.epub"] = true }
+            local out = syncbooks.resolve_collision("Dune.epub",
+                function(name) return existing[name] == true end)
+            assert.are.equal("Dune (1).epub", out)
+        end)
+
+        it("walks (1)..(N) until a free slot is found", function()
+            local existing = {}
+            existing["Dune.epub"]     = true
+            existing["Dune (1).epub"] = true
+            existing["Dune (2).epub"] = true
+            local out = syncbooks.resolve_collision("Dune.epub",
+                function(name) return existing[name] == true end)
+            assert.are.equal("Dune (3).epub", out)
+        end)
+
+        it("handles names without an extension", function()
+            local out = syncbooks.resolve_collision("README",
+                function(name) return name == "README" end)
+            assert.are.equal("README (1)", out)
+        end)
+    end)
+
+    -- =====================================================================
+    -- extractLocalCover(file_path, dst_png) — render a book's embedded cover
+    -- to dst_png as PNG via coverbrowser's BookInfo:getCoverImage so
+    -- uploadBook can ship a cover for books that originated on this device
+    -- (issue #4374), not just ones previously downloaded from the cloud.
+    -- The blitbuffer/document work is live-KOReader-only, so we inject a fake
+    -- BookInfo via package.loaded and assert the success/failure wiring.
+    -- =====================================================================
+    describe("extractLocalCover", function()
+        local BI_KEY = "apps/filemanager/filemanagerbookinfo"
+        local saved_bookinfo
+
+        before_each(function()
+            saved_bookinfo = package.loaded[BI_KEY]
+        end)
+        after_each(function()
+            package.loaded[BI_KEY] = saved_bookinfo
+        end)
+
+        it("writes the cover as PNG and returns true when the book has a cover", function()
+            local wrote, freed
+            local fake_bb = {
+                writeToFile = function(_self, path, fmt)
+                    wrote = { path = path, fmt = fmt }
+                    return true
+                end,
+                free = function() freed = true end,
+            }
+            package.loaded[BI_KEY] = {
+                getCoverImage = function(_self, document, file)
+                    -- Called with a nil document + the book's path so BookInfo
+                    -- opens the file itself (matches calibre.koplugin's usage).
+                    assert.is_nil(document)
+                    assert.are.equal("/books/foo.epub", file)
+                    return fake_bb
+                end,
+            }
+
+            local ok = syncbooks.extractLocalCover("/books/foo.epub", "/cache/abc.png")
+
+            assert.is_true(ok)
+            assert.are.equal("/cache/abc.png", wrote.path)
+            assert.are.equal("png", wrote.fmt)
+            assert.is_true(freed, "the cover blitbuffer must be freed")
+        end)
+
+        it("returns false when the book has no extractable cover", function()
+            package.loaded[BI_KEY] = {
+                getCoverImage = function() return nil end,
+            }
+            assert.is_false(syncbooks.extractLocalCover("/books/foo.epub", "/cache/abc.png"))
+        end)
+
+        it("returns false when the PNG write fails", function()
+            package.loaded[BI_KEY] = {
+                getCoverImage = function()
+                    return { writeToFile = function() return false end, free = function() end }
+                end,
+            }
+            assert.is_false(syncbooks.extractLocalCover("/books/foo.epub", "/cache/abc.png"))
+        end)
+
+        it("returns false when coverbrowser's BookInfo isn't available", function()
+            -- Neither package.loaded nor package.path resolves the module in
+            -- the test env, so require() errors and the pcall guard kicks in.
+            package.loaded[BI_KEY] = nil
+            assert.is_false(syncbooks.extractLocalCover("/books/foo.epub", "/cache/abc.png"))
+        end)
+
+        it("returns false for missing arguments", function()
+            assert.is_false(syncbooks.extractLocalCover(nil, "/cache/abc.png"))
+            assert.is_false(syncbooks.extractLocalCover("/books/foo.epub", nil))
+        end)
+    end)
+
+    -- =====================================================================
+    -- syncBooks(opts, mode, cb, before_push) — bidirectional orchestration.
+    --
+    -- The order matters: pull must run BEFORE push in "both" mode so the
+    -- local row has fresh cloud-side fields (uploaded_at, metadata, etc.)
+    -- before we touch + push it. Otherwise the push would send a row with
+    -- those fields nil, and the server's transformBookToDB explicit-nulls
+    -- them on the cloud — wiping out group/upload state on every device
+    -- that pulls afterward. Regression guard for issue #4138.
+    -- =====================================================================
+    describe("syncBooks", function()
+        -- Stub the network-touching halves so we can record call order and
+        -- assert it without standing up Spore + a fake server.
+        local function with_stubs(fn)
+            local original_pull  = syncbooks.pullBooks
+            local original_push  = syncbooks.pushChangedBooks
+            local calls = {}
+            syncbooks.pullBooks = function(_opts, cb)
+                table.insert(calls, "pull")
+                if cb then cb(true, 0) end
+            end
+            syncbooks.pushChangedBooks = function(_opts, cb)
+                table.insert(calls, "push")
+                if cb then cb(true, 0) end
+            end
+            local ok, err = pcall(fn, calls)
+            syncbooks.pullBooks         = original_pull
+            syncbooks.pushChangedBooks  = original_push
+            if not ok then error(err) end
+        end
+
+        it("runs pull before push in 'both' mode", function()
+            with_stubs(function(calls)
+                local before_push_at
+                syncbooks.syncBooks({}, "both",
+                    function() end,
+                    function() before_push_at = #calls end)
+                assert.are.same({ "pull", "push" }, calls)
+                -- before_push runs AFTER pull and BEFORE push — i.e. with
+                -- exactly one call ("pull") recorded so far.
+                assert.are.equal(1, before_push_at)
+            end)
+        end)
+
+        it("invokes before_push between pull and push in 'both' mode", function()
+            with_stubs(function(calls)
+                local before_push_called = 0
+                syncbooks.syncBooks({}, "both",
+                    function() end,
+                    function() before_push_called = before_push_called + 1 end)
+                assert.are.equal(1, before_push_called)
+            end)
+        end)
+
+        it("invokes before_push and then push in 'push' mode", function()
+            with_stubs(function(calls)
+                local before_push_at
+                syncbooks.syncBooks({}, "push",
+                    function() end,
+                    function() before_push_at = #calls end)
+                assert.are.same({ "push" }, calls)
+                assert.are.equal(0, before_push_at)
+            end)
+        end)
+
+        it("skips before_push in 'pull' mode (no push happens)", function()
+            with_stubs(function(calls)
+                local before_push_called = 0
+                syncbooks.syncBooks({}, "pull",
+                    function() end,
+                    function() before_push_called = before_push_called + 1 end)
+                assert.are.same({ "pull" }, calls)
+                assert.are.equal(0, before_push_called)
+            end)
+        end)
+
+        it("tolerates a missing before_push callback", function()
+            with_stubs(function(calls)
+                -- No before_push passed; orchestration should still work.
+                syncbooks.syncBooks({}, "both", function() end)
+                assert.are.same({ "pull", "push" }, calls)
+            end)
+        end)
+    end)
+
+    -- =====================================================================
+    -- _row_pull_cursor — per-row incremental-pull watermark contribution.
+    -- Mirrors computeMaxTimestamp at apps/readest-app/src/hooks/useSync.ts:29.
+    -- The server keys the books pull on the server-stamped `synced_at`
+    -- (issue #4678), so the cursor must track synced_at — NOT updated_at,
+    -- which is client-supplied and can run ahead of the server on a device
+    -- with a fast clock, starving every later pull (issue #4934).
+    -- =====================================================================
+    describe("_row_pull_cursor", function()
+        it("returns synced_at when present, ignoring a larger (future) updated_at", function()
+            assert.are.equal(100, syncbooks._row_pull_cursor({
+                synced_at = 100, updated_at = 999999999, deleted_at = nil,
+            }))
+        end)
+
+        it("falls back to max(updated_at, deleted_at) when synced_at is absent", function()
+            assert.are.equal(70, syncbooks._row_pull_cursor({ updated_at = 50, deleted_at = 70 }))
+            assert.are.equal(80, syncbooks._row_pull_cursor({ updated_at = 80 }))
+            assert.are.equal(90, syncbooks._row_pull_cursor({ deleted_at = 90 }))
+        end)
+
+        it("returns 0 for a row with no timestamps", function()
+            assert.are.equal(0, syncbooks._row_pull_cursor({}))
+        end)
+    end)
+
+    -- =====================================================================
+    -- pullBooks — end-to-end cursor advancement with an injected sync_auth +
+    -- client and a real in-memory LibraryStore. Regression guard for #4934:
+    -- the pull cursor must advance from synced_at, and the push watermark
+    -- (used for local-change detection) must advance from updated_at, so the
+    -- two never contaminate each other.
+    -- =====================================================================
+    describe("pullBooks cursor (issue #4934)", function()
+        local LibraryStore = require("library.librarystore")
+
+        local function fake_sync_auth(rows)
+            return {
+                withFreshToken = function(_self, _settings, _path, cb) cb(true) end,
+                getReadestSyncClient = function()
+                    return {
+                        pullBooks = function(_self2, _params, cb)
+                            cb(true, { books = rows }, 200)
+                        end,
+                    }
+                end,
+            }
+        end
+
+        local function pull(store, rows)
+            syncbooks.pullBooks({
+                sync_auth = fake_sync_auth(rows),
+                sync_path = "/tmp",
+                settings  = { user_id = "u1" },
+                store     = store,
+            }, function() end)
+        end
+
+        it("advances the pull cursor from synced_at, not a future updated_at", function()
+            local store = LibraryStore.new({ user_id = "u1" })
+            pull(store, {
+                { book_hash = "h1", title = "B",
+                  updated_at = "2099-01-01T00:00:00+00:00",   -- fast-clock device
+                  synced_at  = "2026-06-18T00:00:00+00:00" }, -- real server time
+            })
+            -- Pre-fix the cursor jumped to 2099 and the library never updated.
+            assert.are.equal(1781740800000, store:getLastPulledAt())  -- 2026-06-18Z
+            store:close()
+        end)
+
+        it("advances pull cursor (synced_at) and push watermark (updated_at) distinctly", function()
+            local store = LibraryStore.new({ user_id = "u1" })
+            pull(store, {
+                { book_hash = "h1", title = "B",
+                  updated_at = "2026-06-18T00:00:00+00:00",
+                  synced_at  = "2026-06-20T00:00:00+00:00" },
+            })
+            assert.are.equal(1781913600000, store:getLastPulledAt())  -- synced_at 2026-06-20Z
+            -- Push watermark tracks local updated_at so a just-pulled book is
+            -- not re-pushed on the next sync (dedup parity with the old cursor).
+            assert.are.equal(1781740800000, store:getLastPushedAt())  -- updated_at 2026-06-18Z
+            store:close()
+        end)
+    end)
+end)

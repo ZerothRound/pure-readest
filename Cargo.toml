@@ -1,0 +1,53 @@
+[workspace]
+members = [
+  "apps/readest-app/src-tauri",
+  "packages/tauri/crates/tauri",
+  "packages/tauri-plugins/plugins/fs"
+]
+exclude = [
+  "packages/qcms"
+]
+resolver = "2"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+tracing = "0.1"
+log = "0.4"
+tauri = { version = "2", default-features = false }
+tauri-build = "2"
+tauri-plugin = "2"
+tauri-utils = "2"
+schemars = "0.8"
+serde_json = "1"
+thiserror = "2"
+glob = "0.3"
+zbus = "5.9"
+dunce = "1"
+url = "2"
+tar = "0.4.45"
+nix = "0.20.2"
+glib = "0.20.0"
+
+[workspace.package]
+authors = ["Bilingify LLC"]
+homepage = "https://readest.com"
+license = "AGPL-3.0"
+repository = "https://github.com/readest/readest"
+categories = []
+edition = "2021"
+rust-version = "1.77.2"
+
+[patch.crates-io]
+tauri = { path = "packages/tauri/crates/tauri" }
+tauri-plugin-fs = { path = "packages/tauri-plugins/plugins/fs" }
+# Xcode 26.2 (Swift 6.2) broke upstream swift-rs 1.0.7's per-swiftc target
+# override; the vendored copy cross-compiles via `--triple`/`--sdk` instead.
+# Upstream is unmaintained (last release 2024). See packages/swift-rs.
+swift-rs = { path = "packages/swift-rs" }
+# tao 0.35.3 + a use-after-free fix in the iOS scene-configuration callback
+# (configuration_for_connecting_scene_session returned a raw borrow of a
+# Retained it dropped; UIKit then retained a freed UISceneConfiguration and
+# the app SIGSEGVed at launch on real devices whenever an
+# UIApplicationSceneManifest is present - i.e. the CarPlay scene). See
+# packages/tao/src/platform_impl/ios/view.rs; worth an upstream PR.
+tao = { path = "packages/tao" }

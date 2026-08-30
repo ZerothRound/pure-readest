@@ -1,0 +1,456 @@
+use serde::de::DeserializeOwned;
+use tauri::{
+    plugin::{PluginApi, PluginHandle},
+    AppHandle, Runtime,
+};
+
+use crate::models::*;
+
+#[cfg(target_os = "ios")]
+tauri::ios_plugin_binding!(init_plugin_native_bridge);
+
+// initializes the Kotlin or Swift plugin classes
+pub fn init<R: Runtime, C: DeserializeOwned>(
+    _app: &AppHandle<R>,
+    api: PluginApi<R, C>,
+) -> crate::Result<NativeBridge<R>> {
+    #[cfg(target_os = "android")]
+    let handle = api.register_android_plugin("com.readest.native_bridge", "NativeBridgePlugin")?;
+    #[cfg(target_os = "ios")]
+    let handle = api.register_ios_plugin(init_plugin_native_bridge)?;
+    Ok(NativeBridge(handle))
+}
+
+/// Access to the native-bridge APIs.
+pub struct NativeBridge<R: Runtime>(PluginHandle<R>);
+
+impl<R: Runtime> NativeBridge<R> {
+    pub fn auth_with_safari(&self, payload: AuthRequest) -> crate::Result<AuthResponse> {
+        self.0
+            .run_mobile_plugin("auth_with_safari", payload)
+            .map_err(Into::into)
+    }
+}
+
+impl<R: Runtime> NativeBridge<R> {
+    pub fn auth_with_custom_tab(&self, payload: AuthRequest) -> crate::Result<AuthResponse> {
+        self.0
+            .run_mobile_plugin("auth_with_custom_tab", payload)
+            .map_err(Into::into)
+    }
+}
+
+impl<R: Runtime> NativeBridge<R> {
+    pub fn copy_uri_to_path(&self, payload: CopyURIRequest) -> crate::Result<CopyURIResponse> {
+        self.0
+            .run_mobile_plugin("copy_uri_to_path", payload)
+            .map_err(Into::into)
+    }
+
+    pub fn render_pdf_cover(
+        &self,
+        payload: RenderPdfCoverRequest,
+    ) -> crate::Result<RenderPdfCoverResponse> {
+        self.0
+            .run_mobile_plugin("render_pdf_cover", payload)
+            .map_err(Into::into)
+    }
+}
+
+impl<R: Runtime> NativeBridge<R> {
+    pub fn save_image_to_gallery(
+        &self,
+        payload: SaveImageToGalleryRequest,
+    ) -> crate::Result<SaveImageToGalleryResponse> {
+        self.0
+            .run_mobile_plugin("save_image_to_gallery", payload)
+            .map_err(Into::into)
+    }
+}
+
+impl<R: Runtime> NativeBridge<R> {
+    pub fn use_background_audio(&self, payload: UseBackgroundAudioRequest) -> crate::Result<()> {
+        self.0
+            .run_mobile_plugin("use_background_audio", payload)
+            .map_err(Into::into)
+    }
+}
+
+impl<R: Runtime> NativeBridge<R> {
+    /// The MulticastLock is an Android concept; iOS delivers multicast
+    /// without one (entitlements permitting), so this is a no-op there.
+    pub fn set_multicast_lock(&self, payload: MulticastLockRequest) -> crate::Result<()> {
+        #[cfg(target_os = "android")]
+        {
+            self.0
+                .run_mobile_plugin("set_multicast_lock", payload)
+                .map_err(Into::into)
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            let _ = payload;
+            Ok(())
+        }
+    }
+}
+
+impl<R: Runtime> NativeBridge<R> {
+    pub fn set_selection_suppressed(
+        &self,
+        payload: SetSelectionSuppressedRequest,
+    ) -> crate::Result<()> {
+        self.0
+            .run_mobile_plugin("set_selection_suppressed", payload)
+            .map_err(Into::into)
+    }
+}
+
+impl<R: Runtime> NativeBridge<R> {
+    pub fn install_package(
+        &self,
+        payload: InstallPackageRequest,
+    ) -> crate::Result<InstallPackageResponse> {
+        self.0
+            .run_mobile_plugin("install_package", payload)
+            .map_err(Into::into)
+    }
+}
+
+impl<R: Runtime> NativeBridge<R> {
+    pub fn set_system_ui_visibility(
+        &self,
+        payload: SetSystemUIVisibilityRequest,
+    ) -> crate::Result<SetSystemUIVisibilityResponse> {
+        self.0
+            .run_mobile_plugin("set_system_ui_visibility", payload)
+            .map_err(Into::into)
+    }
+}
+
+impl<R: Runtime> NativeBridge<R> {
+    pub fn get_status_bar_height(&self) -> crate::Result<GetStatusBarHeightResponse> {
+        self.0
+            .run_mobile_plugin("get_status_bar_height", ())
+            .map_err(Into::into)
+    }
+}
+
+impl<R: Runtime> NativeBridge<R> {
+    pub fn get_sys_fonts_list(&self) -> crate::Result<GetSysFontsListResponse> {
+        self.0
+            .run_mobile_plugin("get_sys_fonts_list", ())
+            .map_err(Into::into)
+    }
+}
+
+impl<R: Runtime> NativeBridge<R> {
+    pub fn intercept_keys(&self, payload: InterceptKeysRequest) -> crate::Result<()> {
+        self.0
+            .run_mobile_plugin("intercept_keys", payload)
+            .map_err(Into::into)
+    }
+}
+
+impl<R: Runtime> NativeBridge<R> {
+    pub fn lock_screen_orientation(
+        &self,
+        payload: LockScreenOrientationRequest,
+    ) -> crate::Result<()> {
+        self.0
+            .run_mobile_plugin("lock_screen_orientation", payload)
+            .map_err(Into::into)
+    }
+}
+
+impl<R: Runtime> NativeBridge<R> {
+    pub fn get_system_color_scheme(&self) -> crate::Result<GetSystemColorSchemeResponse> {
+        self.0
+            .run_mobile_plugin("get_system_color_scheme", ())
+            .map_err(Into::into)
+    }
+}
+
+impl<R: Runtime> NativeBridge<R> {
+    pub fn get_safe_area_insets(&self) -> crate::Result<GetSafeAreaInsetsResponse> {
+        self.0
+            .run_mobile_plugin("get_safe_area_insets", ())
+            .map_err(Into::into)
+    }
+}
+
+impl<R: Runtime> NativeBridge<R> {
+    pub fn get_screen_brightness(&self) -> crate::Result<GetScreenBrightnessResponse> {
+        self.0
+            .run_mobile_plugin("get_screen_brightness", ())
+            .map_err(Into::into)
+    }
+}
+
+impl<R: Runtime> NativeBridge<R> {
+    pub fn set_screen_brightness(
+        &self,
+        payload: SetScreenBrightnessRequest,
+    ) -> crate::Result<SetScreenBrightnessResponse> {
+        self.0
+            .run_mobile_plugin("set_screen_brightness", payload)
+            .map_err(Into::into)
+    }
+}
+
+impl<R: Runtime> NativeBridge<R> {
+    pub fn has_ambient_light_sensor(&self) -> crate::Result<HasAmbientLightSensorResponse> {
+        self.0
+            .run_mobile_plugin("has_ambient_light_sensor", ())
+            .map_err(Into::into)
+    }
+}
+
+impl<R: Runtime> NativeBridge<R> {
+    pub fn start_ambient_light_updates(&self) -> crate::Result<AmbientLightUpdatesResponse> {
+        self.0
+            .run_mobile_plugin("start_ambient_light_updates", ())
+            .map_err(Into::into)
+    }
+}
+
+impl<R: Runtime> NativeBridge<R> {
+    pub fn stop_ambient_light_updates(&self) -> crate::Result<AmbientLightUpdatesResponse> {
+        self.0
+            .run_mobile_plugin("stop_ambient_light_updates", ())
+            .map_err(Into::into)
+    }
+}
+
+impl<R: Runtime> NativeBridge<R> {
+    pub fn get_external_sdcard_path(&self) -> crate::Result<GetExternalSDCardPathResponse> {
+        self.0
+            .run_mobile_plugin("get_external_sdcard_path", ())
+            .map_err(Into::into)
+    }
+}
+
+impl<R: Runtime> NativeBridge<R> {
+    pub fn open_external_url(
+        &self,
+        payload: OpenExternalUrlRequest,
+    ) -> crate::Result<OpenExternalUrlResponse> {
+        self.0
+            .run_mobile_plugin("open_external_url", payload)
+            .map_err(Into::into)
+    }
+}
+
+impl<R: Runtime> NativeBridge<R> {
+    pub fn show_lookup_popover(
+        &self,
+        payload: ShowLookupPopoverRequest,
+    ) -> crate::Result<ShowLookupPopoverResponse> {
+        self.0
+            .run_mobile_plugin("show_lookup_popover", payload)
+            .map_err(Into::into)
+    }
+}
+
+impl<R: Runtime> NativeBridge<R> {
+    pub fn select_directory(&self) -> crate::Result<SelectDirectoryResponse> {
+        self.0
+            .run_mobile_plugin("select_directory", ())
+            .map_err(Into::into)
+    }
+}
+
+impl<R: Runtime> NativeBridge<R> {
+    // Android only. Fire-and-forget: the picked URIs are delivered via the
+    // `file-picker-result` plugin event so they survive activity/process
+    // recreation behind the system picker (#1217).
+    pub fn show_file_picker(&self) -> crate::Result<()> {
+        self.0
+            .run_mobile_plugin("show_file_picker", ())
+            .map_err(Into::into)
+    }
+}
+
+impl<R: Runtime> NativeBridge<R> {
+    pub fn get_storefront_region_code(&self) -> crate::Result<GetStorefrontRegionCodeResponse> {
+        self.0
+            .run_mobile_plugin("get_storefront_region_code", ())
+            .map_err(Into::into)
+    }
+}
+
+impl<R: Runtime> NativeBridge<R> {
+    pub fn request_manage_storage_permission(
+        &self,
+    ) -> crate::Result<RequestManageStoragePermissionResponse> {
+        self.0
+            .run_mobile_plugin("request_manage_storage_permission", ())
+            .map_err(Into::into)
+    }
+}
+
+impl<R: Runtime> NativeBridge<R> {
+    pub fn set_sync_passphrase(
+        &self,
+        payload: SetSyncPassphraseRequest,
+    ) -> crate::Result<SyncPassphraseResponse> {
+        self.0
+            .run_mobile_plugin("set_sync_passphrase", payload)
+            .map_err(Into::into)
+    }
+}
+
+impl<R: Runtime> NativeBridge<R> {
+    pub fn get_sync_passphrase(&self) -> crate::Result<GetSyncPassphraseResponse> {
+        self.0
+            .run_mobile_plugin("get_sync_passphrase", ())
+            .map_err(Into::into)
+    }
+}
+
+impl<R: Runtime> NativeBridge<R> {
+    pub fn clear_sync_passphrase(&self) -> crate::Result<SyncPassphraseResponse> {
+        self.0
+            .run_mobile_plugin("clear_sync_passphrase", ())
+            .map_err(Into::into)
+    }
+}
+
+impl<R: Runtime> NativeBridge<R> {
+    pub fn is_sync_keychain_available(&self) -> crate::Result<SyncKeychainAvailableResponse> {
+        self.0
+            .run_mobile_plugin("is_sync_keychain_available", ())
+            .map_err(Into::into)
+    }
+}
+
+impl<R: Runtime> NativeBridge<R> {
+    pub fn set_secure_item(
+        &self,
+        payload: SetSecureItemRequest,
+    ) -> crate::Result<SecureItemResponse> {
+        self.0
+            .run_mobile_plugin("set_secure_item", payload)
+            .map_err(Into::into)
+    }
+}
+
+impl<R: Runtime> NativeBridge<R> {
+    pub fn get_secure_item(
+        &self,
+        payload: GetSecureItemRequest,
+    ) -> crate::Result<GetSecureItemResponse> {
+        self.0
+            .run_mobile_plugin("get_secure_item", payload)
+            .map_err(Into::into)
+    }
+}
+
+impl<R: Runtime> NativeBridge<R> {
+    pub fn clear_secure_item(
+        &self,
+        payload: GetSecureItemRequest,
+    ) -> crate::Result<SecureItemResponse> {
+        self.0
+            .run_mobile_plugin("clear_secure_item", payload)
+            .map_err(Into::into)
+    }
+}
+
+impl<R: Runtime> NativeBridge<R> {
+    pub fn refresh_eink_screen(&self) -> crate::Result<RefreshEinkScreenResponse> {
+        self.0
+            .run_mobile_plugin("refresh_eink_screen", ())
+            .map_err(Into::into)
+    }
+}
+
+impl<R: Runtime> NativeBridge<R> {
+    /// Open a full-screen `WKWebView` / `WebView` over the main app,
+    /// navigate to `payload.url` with a real Chrome UA, wait for load
+    /// + settle, then return `document.documentElement.outerHTML`. The
+    /// overlay UX (loading spinner, theme-matched backdrop, localized
+    /// labels) is driven by the same fields the desktop `clip_url`
+    /// command consumes — see `clip_url.rs` for the canonical struct.
+    pub fn clip_url(&self, payload: ClipUrlRequest) -> crate::Result<ClipUrlResponse> {
+        self.0
+            .run_mobile_plugin("clip_url", payload)
+            .map_err(Into::into)
+    }
+
+    /// Present the native in-app browser (`WebBrowserController.swift/.kt`).
+    /// Blocks until the user closes it; downloads arrive meanwhile as
+    /// `web-browser-download` plugin events.
+    pub fn open_web_browser(
+        &self,
+        payload: WebBrowserRequest,
+    ) -> crate::Result<WebBrowserResponse> {
+        self.0
+            .run_mobile_plugin("open_web_browser", payload)
+            .map_err(Into::into)
+    }
+
+    /// Push an import status into the open browser's banner.
+    pub fn set_web_browser_status(&self, payload: WebBrowserStatusRequest) -> crate::Result<()> {
+        self.0
+            .run_mobile_plugin::<serde::de::IgnoredAny>("set_web_browser_status", payload)
+            .map(|_| ())
+            .map_err(Into::into)
+    }
+
+    /// Read + delete a Share-Extension-captured page HTML file from the
+    /// App Group container (iOS only; Android resolves `html: None`).
+    pub fn read_share_clip_html(
+        &self,
+        payload: ReadShareClipHtmlRequest,
+    ) -> crate::Result<ReadShareClipHtmlResponse> {
+        self.0
+            .run_mobile_plugin("read_share_clip_html", payload)
+            .map_err(Into::into)
+    }
+}
+
+impl<R: Runtime> NativeBridge<R> {
+    pub fn update_reading_widget(&self, payload: UpdateReadingWidgetRequest) -> crate::Result<()> {
+        self.0
+            .run_mobile_plugin("update_reading_widget", payload)
+            .map_err(Into::into)
+    }
+}
+
+impl<R: Runtime> NativeBridge<R> {
+    /// Snapshot a region of the webview as PNG bytes for the mesh
+    /// page-curl texture (#555). The Swift (WKWebView takeSnapshot) or
+    /// Kotlin (PixelCopy) side resolves JSON, so the image arrives
+    /// base64-encoded and is decoded here; the JS-facing command then
+    /// returns it binary.
+    pub fn capture_webview_region(
+        &self,
+        _window: &tauri::WebviewWindow<R>,
+        payload: CaptureWebviewRegionRequest,
+    ) -> crate::Result<Vec<u8>> {
+        use base64::Engine as _;
+        let response: CaptureWebviewRegionResponse = self
+            .0
+            .run_mobile_plugin("capture_webview_region", payload)?;
+        base64::engine::general_purpose::STANDARD
+            .decode(response.data)
+            .map_err(|e| crate::Error::NativeBridgeError(format!("invalid base64 PNG: {e}")))
+    }
+}
+
+impl<R: Runtime> NativeBridge<R> {
+    pub fn icloud_container_status(&self) -> crate::Result<ICloudContainerStatusResponse> {
+        self.0
+            .run_mobile_plugin("icloud_container_status", ())
+            .map_err(Into::into)
+    }
+
+    pub fn icloud_ensure_downloaded(
+        &self,
+        payload: ICloudEnsureDownloadedRequest,
+    ) -> crate::Result<ICloudEnsureDownloadedResponse> {
+        self.0
+            .run_mobile_plugin("icloud_ensure_downloaded", payload)
+            .map_err(Into::into)
+    }
+}

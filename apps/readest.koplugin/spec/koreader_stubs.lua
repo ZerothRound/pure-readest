@@ -1,0 +1,218 @@
+-- koreader_stubs.lua
+-- KOReader stubs for the specs that load main.lua (the plugin entry point).
+--
+-- Why this is shared rather than per-spec: busted runs every spec file in ONE
+-- Lua state, so `package.preload` is global and `package.loaded` caches the
+-- first `require()` winner. Two spec files each declaring their own
+-- `package.preload["ui/uimanager"]` would race on file load order — whichever
+-- loaded first would win, and the other's assertions would silently observe a
+-- stub it never wrote to. Registering the stubs once, here, removes that
+-- ordering hazard.
+--
+-- main.lua captures `local Dispatcher = require("dispatcher")` in a module
+-- upvalue at load time, so the Dispatcher table identity must be stable for
+-- the whole run — reset() therefore wipes the registry in place rather than
+-- reassigning it (same rule spec_helper documents for its own fakes).
+
+local M = {}
+
+-- Records every Dispatcher:registerAction call so specs can assert which
+-- gesture actions the plugin exposes.
+M.Dispatcher = {
+    _registered = {},
+    registerAction = function(self, name, opts)
+        table.insert(self._registered, { name = name, opts = opts })
+    end,
+}
+
+-- Look up a captured registration by action name; nil if never registered.
+function M.Dispatcher:find(name)
+    for _, entry in ipairs(self._registered) do
+        if entry.name == name then return entry.opts end
+    end
+    return nil
+end
+
+M.UIManager = {
+    _scheduled = {},
+    _shown = {},
+    _closed = {},
+    show = function(self, widget)
+        table.insert(self._shown, widget)
+    end,
+    close = function(self, widget)
+        table.insert(self._closed, widget)
+    end,
+    nextTick = function(self, fn)
+        table.insert(self._scheduled, { delay = 0, fn = fn })
+    end,
+    scheduleIn = function(self, delay, fn)
+        table.insert(self._scheduled, { delay = delay, fn = fn })
+    end,
+    unschedule = function(self, fn)
+        for i = #self._scheduled, 1, -1 do
+            if self._scheduled[i].fn == fn then
+                table.remove(self._scheduled, i)
+            end
+        end
+    end,
+}
+
+-- Drain the scheduled queue, running each task once. Tasks that schedule
+-- further work (uploadCurrentBook hashes on nextTick, then continues) are
+-- picked up on the next drain pass.
+function M.UIManager:drain()
+    local pending = self._scheduled
+    self._scheduled = {}
+    for _, task in ipairs(pending) do
+        task.fn()
+    end
+    return #pending
+end
+
+-- `util.partialMD5` is swapped per-spec; default returns a deterministic hash.
+-- The split helpers mirror KOReader's frontend/util.lua so hash-source
+-- assertions exercise the same filename handling production sees.
+M.util = {
+    partialMD5 = function(_file) return "stub-md5" end,
+    splitFilePathName = function(file)
+        if file == nil or file == "" then return "", "" end
+        if string.find(file, "/") == nil then return "", file end
+        return file:match("(.*/)(.*)")
+    end,
+    splitFileNameSuffix = function(file)
+        if file == nil or file == "" then return "", "" end
+        if string.find(file, "%.") == nil then return file, "" end
+        return file:match("(.*)%.(.*)")
+    end,
+    splitToArray = function(str, sep)
+        local result = {}
+        for piece in (str .. sep):gmatch("(.-)" .. sep) do
+            if piece ~= "" then table.insert(result, piece) end
+        end
+        return result
+    end,
+}
+
+-- The Library widget is a heavy KOReader UI module (menus, painters, FFI
+-- image decoders). main.lua only touches it to refresh an already-open
+-- Library, so a stub with the two fields it reads is enough. Safe to preload
+-- globally: no other spec requires library.librarywidget.
+M.LibraryWidget = {
+    _menu = nil,
+    _store = nil,
+    _current_user = nil,
+    refresh = function() end,
+    open = function() end,
+}
+
+-- Hoisted so specs can flip connectivity (M.NetworkMgr._online) and observe
+-- which NetworkMgr path a call took. willRerunWhenOnline / goOnlineToRun are
+-- the paths that bring Wi-Fi up (modal on Kobo/Kindle), so specs count them.
+M.NetworkMgr = {
+    _online = true,
+    _willRerunWhenOnline_calls = 0,
+    _goOnlineToRun_calls = 0,
+    isOnline = function(self) return self._online end,
+    isConnected = function(self) return self._online end,
+    willRerunWhenOnline = function(self)
+        self._willRerunWhenOnline_calls = self._willRerunWhenOnline_calls + 1
+        return false
+    end,
+    goOnlineToRun = function(self, cb)
+        self._goOnlineToRun_calls = self._goOnlineToRun_calls + 1
+        cb()
+    end,
+}
+
+-- Bare plugin instance (skips init(): no menu/dispatcher/meta wiring) whose
+-- three pull methods are faked to record their calls, for specs that observe
+-- what a lifecycle event (open / wake / network back) schedules.
+function M.makePullPlugin(ReadestSync, opts)
+    local plugin = setmetatable({
+        settings = {
+            auto_sync = opts.auto_sync,
+            access_token = opts.access_token,
+            localsend_enabled = false,
+        },
+        ui = { document = opts.document },
+        pull_calls = {},
+    }, { __index = ReadestSync })
+    for _, method in ipairs({ "pullBookConfig", "pullBookNotes", "pullBookStats" }) do
+        plugin[method] = function(self, interactive)
+            table.insert(self.pull_calls, { method = method, interactive = interactive })
+        end
+    end
+    return plugin
+end
+
+function M.reset()
+    for i = #M.Dispatcher._registered, 1, -1 do
+        M.Dispatcher._registered[i] = nil
+    end
+    for _, list in ipairs({ M.UIManager._scheduled, M.UIManager._shown, M.UIManager._closed }) do
+        for i = #list, 1, -1 do list[i] = nil end
+    end
+    M.util.partialMD5 = function(_file) return "stub-md5" end
+    M.NetworkMgr._online = true
+    M.NetworkMgr._willRerunWhenOnline_calls = 0
+    M.NetworkMgr._goOnlineToRun_calls = 0
+    M.LibraryWidget._menu = nil
+    M.LibraryWidget._store = nil
+    M.LibraryWidget._current_user = nil
+end
+
+package.preload["dispatcher"] = function() return M.Dispatcher end
+package.preload["ui/uimanager"] = function() return M.UIManager end
+package.preload["util"] = function() return M.util end
+package.preload["library.librarywidget"] = function() return M.LibraryWidget end
+package.preload["ui/event"] = function()
+    return { new = function(_, name) return { name = name } end }
+end
+package.preload["ui/widget/infomessage"] = function()
+    return { new = function(_, o) return o or {} end }
+end
+package.preload["ui/widget/confirmbox"] = function()
+    return { new = function(self, o) return setmetatable(o or {}, { __index = self }) end }
+end
+package.preload["ui/widget/keyvaluepage"] = function()
+    return { new = function(_, o) return o or {} end }
+end
+package.preload["ui/widget/multiinputdialog"] = function()
+    return { new = function(_, o) return o or {} end }
+end
+package.preload["ui/widget/container/widgetcontainer"] = function()
+    return {
+        new = function(self, o)
+            o = o or {}
+            setmetatable(o, { __index = self })
+            if o.init then o:init() end
+            return o
+        end,
+    }
+end
+package.preload["ui/network/manager"] = function() return M.NetworkMgr end
+package.preload["ffi/sha2"] = function()
+    return {
+        base64_to_bin = function(s) return s end,
+        -- Marker instead of real md5: hash-source parity specs assert the
+        -- exact input string, which is what must match Readest's TS side —
+        -- md5 itself is the same everywhere.
+        md5 = function(s) return "md5:" .. s end,
+    }
+end
+package.preload["ffi/util"] = function()
+    return { template = function(s) return s end }
+end
+-- KOReader bundles its own lfs build; specs run against the host's
+-- luafilesystem, which speaks the same API surface we use (attributes).
+package.preload["libs/libkoreader-lfs"] = function()
+    return require("lfs")
+end
+package.preload["readest_i18n"] = function()
+    return function(s) return s end
+end
+
+package.preload["spec.koreader_stubs"] = function() return M end
+
+return M

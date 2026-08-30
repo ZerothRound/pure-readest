@@ -1,0 +1,648 @@
+'use client';
+
+import clsx from 'clsx';
+import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
+import { ViewSettings } from '@/types/book';
+import { Insets } from '@/types/misc';
+import { useEnv } from '@/context/EnvContext';
+import { eventDispatcher } from '@/utils/event';
+import {
+  getParagraphActionForKey,
+  getParagraphActionForZone,
+  getParagraphLayoutContext,
+  ParagraphPresentation,
+} from '@/utils/paragraphPresentation';
+import { getTextSubRange } from '@/services/tts/wordHighlight';
+import { getBaseFontFamily } from '@/utils/style';
+import { loadShortcuts } from '@/helpers/shortcuts';
+import { matchesShortcut } from '@/utils/shortcutKeys';
+import TTSFollowIndicator, { TtsSyncStatus } from '../tts/TTSFollowIndicator';
+import { buildTtsHighlightCssText } from './paragraphTts';
+
+// CSS Custom Highlight registry name for the in-paragraph TTS word/sentence
+// highlight (#3235). Unique per app so it never collides with other highlights.
+const TTS_HIGHLIGHT_NAME = 'readest-tts-paragraph';
+
+interface ParagraphOverlayProps {
+  bookKey: string;
+  viewSettings?: ViewSettings;
+  /** Display scale on top of the reader's font size (#5246); 1 = book size. */
+  fontScale?: number;
+  gridInsets?: Insets;
+  /** Derived TTS-sync status driving the "following audio" indicator (#3235). */
+  ttsSyncStatus?: TtsSyncStatus;
+  /** Re-engage following after a manual nav decoupled it (indicator action). */
+  onResumeTtsFollow?: () => void;
+  onClose?: () => void;
+}
+
+interface ParagraphContent {
+  id: number;
+  html: string;
+  presentation: ParagraphPresentation;
+}
+
+const getParagraphTextAlign = (presentation: ParagraphPresentation) =>
+  presentation.textAlign || (presentation.vertical ? 'center' : undefined);
+
+const AnimatedParagraph: React.FC<{
+  html: string;
+  presentation: ParagraphPresentation;
+  style: React.CSSProperties;
+}> = ({ html, presentation, style }) => {
+  const [isReady, setIsReady] = useState(false);
+
+  useEffect(() => {
+    setIsReady(false);
+    const frame = requestAnimationFrame(() => setIsReady(true));
+    return () => cancelAnimationFrame(frame);
+  }, [html]);
+
+  return (
+    <div
+      lang={presentation.lang}
+      dir={presentation.dir}
+      className={clsx(
+        'paragraph-content text-base-content transition-[opacity,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]',
+        presentation.vertical ? 'mx-auto w-auto max-w-none' : 'w-full',
+        isReady ? 'translate-y-0 opacity-100' : 'translate-y-2 opacity-0',
+      )}
+      style={{
+        ...style,
+        direction: presentation.dir,
+        writingMode: presentation.writingMode as React.CSSProperties['writingMode'],
+        textOrientation: presentation.textOrientation as React.CSSProperties['textOrientation'],
+        unicodeBidi: presentation.unicodeBidi as React.CSSProperties['unicodeBidi'],
+        textAlign: getParagraphTextAlign(presentation) as React.CSSProperties['textAlign'],
+        transformOrigin: 'center top',
+      }}
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
+  );
+};
+
+const SectionTransitionIndicator: React.FC<{
+  isVisible: boolean;
+  direction: 'next' | 'prev';
+}> = ({ isVisible, direction }) => {
+  const [isReady, setIsReady] = useState(false);
+
+  useEffect(() => {
+    if (!isVisible) return undefined;
+    const timer = requestAnimationFrame(() => {
+      setTimeout(() => setIsReady(true), 30);
+    });
+    return () => {
+      cancelAnimationFrame(timer);
+      setIsReady(false);
+    };
+  }, [isVisible]);
+
+  if (!isVisible) return null;
+
+  return (
+    <div
+      className={clsx(
+        'flex w-full items-center justify-center',
+        'duration-400 transition-all ease-out',
+        isReady ? 'translate-y-0 opacity-100' : 'translate-y-4 opacity-0',
+      )}
+    >
+      <div className='flex items-center gap-3'>
+        <div className='flex items-center gap-1.5'>
+          {[0, 1, 2].map((i) => (
+            <div
+              key={i}
+              className='bg-base-content/30 h-1.5 w-1.5 rounded-full'
+              style={{
+                animation: 'pulse 800ms ease-in-out infinite',
+                animationDelay: `${i * 150}ms`,
+              }}
+            />
+          ))}
+        </div>
+        <span className='text-base-content/40 text-base font-medium'>
+          {direction === 'next' ? 'Next chapter' : 'Previous chapter'}
+        </span>
+      </div>
+    </div>
+  );
+};
+
+const ParagraphOverlay: React.FC<ParagraphOverlayProps> = ({
+  bookKey,
+  viewSettings,
+  fontScale = 1,
+  gridInsets = { top: 0, right: 0, bottom: 0, left: 0 },
+  ttsSyncStatus = 'idle',
+  onResumeTtsFollow,
+  onClose,
+}) => {
+  const { appService } = useEnv();
+  const [paragraphs, setParagraphs] = useState<ParagraphContent[]>([]);
+  const [isVisible, setIsVisible] = useState(false);
+  const [isOverlayMounted, setIsOverlayMounted] = useState(false);
+  const [isChangingSection, setIsChangingSection] = useState(false);
+  const [sectionDirection, setSectionDirection] = useState<'next' | 'prev'>('next');
+  // Index of the currently focused paragraph, used to gate the TTS word/sentence
+  // highlight so a stale highlight never lands on the wrong paragraph (#3235).
+  const [focusIndex, setFocusIndex] = useState(-1);
+  const [ttsHighlight, setTtsHighlight] = useState<{
+    index: number;
+    start: number;
+    end: number;
+  } | null>(null);
+  const paragraphIdCounter = useRef(0);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const lastScrollTime = useRef(0);
+  const onCloseRef = useRef(onClose);
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
+  const contentStyle = useMemo(() => {
+    if (!viewSettings) return {};
+    // Resolve the same font chain as the RSVP overlay (custom + CJK +
+    // fallbacks); a bare serif/sans pair dropped the user's CJK/custom font,
+    // so CJK text fell back to the system font (#5246).
+    const defaultFontFamily = viewSettings.defaultFont
+      ? getBaseFontFamily(viewSettings)
+      : undefined;
+    return {
+      fontFamily: defaultFontFamily,
+      fontSize: `${(viewSettings.defaultFontSize || 16) * fontScale}px`,
+      lineHeight: viewSettings.lineHeight || 1.6,
+      letterSpacing: viewSettings.letterSpacing ? `${viewSettings.letterSpacing}px` : undefined,
+      wordSpacing: viewSettings.wordSpacing ? `${viewSettings.wordSpacing}px` : undefined,
+      fontWeight: viewSettings.fontWeight || 400,
+      WebkitFontSmoothing: 'antialiased',
+      fontKerning: 'normal',
+      textRendering: 'optimizeLegibility',
+    } as React.CSSProperties;
+  }, [viewSettings, fontScale]);
+
+  const activePresentation = paragraphs[0]?.presentation ?? undefined;
+  const activeParagraph = paragraphs[0];
+  const layoutContext = useMemo(
+    () => getParagraphLayoutContext(activePresentation ?? viewSettings),
+    [activePresentation, viewSettings],
+  );
+  const frameStyle = useMemo(() => {
+    const topInset = appService?.hasSafeAreaInset ? gridInsets.top : 0;
+    const bottomInset = appService?.hasSafeAreaInset ? gridInsets.bottom * 0.33 : 0;
+    const viewportPadding = `clamp(1rem, 4vw, 2.5rem)`;
+
+    return {
+      boxSizing: 'border-box',
+      paddingBlock: layoutContext.vertical
+        ? 'clamp(0.9rem, 2.4vh, 1.35rem)'
+        : 'clamp(1rem, 3vh, 1.75rem)',
+      paddingInline: layoutContext.vertical
+        ? 'clamp(0.85rem, 2.8vw, 1.2rem)'
+        : 'clamp(1rem, 4vw, 2rem)',
+      inlineSize: layoutContext.vertical
+        ? 'fit-content'
+        : `min(calc(100vw - (${viewportPadding} * 2)), 66ch)`,
+      blockSize: layoutContext.vertical ? 'fit-content' : undefined,
+      minInlineSize: layoutContext.vertical ? '5.25rem' : undefined,
+      maxInlineSize: layoutContext.vertical
+        ? `min(calc(100dvh - ${topInset + bottomInset + 80}px), 24rem)`
+        : undefined,
+      maxBlockSize: layoutContext.vertical
+        ? 'min(calc(100vw - 1.5rem), 28rem)'
+        : `min(calc(100dvh - ${topInset + bottomInset + 132}px), 38rem)`,
+      marginInline: 'auto',
+    } as React.CSSProperties;
+  }, [appService?.hasSafeAreaInset, gridInsets.bottom, gridInsets.top, layoutContext.vertical]);
+  // `::highlight()` declaration matching the user's TTS highlight color/style so
+  // the in-paragraph word/sentence highlight looks like normal mode (#3235).
+  const ttsHighlightCss = useMemo(
+    () => buildTtsHighlightCssText(viewSettings?.ttsHighlightOptions),
+    [viewSettings?.ttsHighlightOptions],
+  );
+  const fallbackPresentation = useMemo(
+    (): ParagraphPresentation => ({
+      dir: layoutContext.rtl ? 'rtl' : 'ltr',
+      writingMode: layoutContext.writingMode,
+      vertical: layoutContext.vertical,
+      rtl: layoutContext.rtl,
+    }),
+    [layoutContext.rtl, layoutContext.vertical, layoutContext.writingMode],
+  );
+
+  const extractContent = useCallback((range: Range): string => {
+    try {
+      const fragment = range.cloneContents();
+      const tempDiv = document.createElement('div');
+      tempDiv.appendChild(fragment);
+      return tempDiv.innerHTML;
+    } catch {
+      return '';
+    }
+  }, []);
+
+  const addParagraph = useCallback(
+    (range: Range, presentation?: ParagraphPresentation) => {
+      const html = extractContent(range);
+      if (!html) return;
+
+      const newId = ++paragraphIdCounter.current;
+      const nextPresentation = presentation ?? fallbackPresentation;
+
+      setParagraphs([{ id: newId, html, presentation: nextPresentation }]);
+    },
+    [extractContent, fallbackPresentation],
+  );
+
+  useEffect(() => {
+    let sectionChangeTimeoutId: ReturnType<typeof setTimeout> | null = null;
+
+    const handleFocus = (event: CustomEvent) => {
+      if (event.detail?.bookKey !== bookKey) return;
+      const range = event.detail?.range;
+      const presentation = event.detail?.presentation;
+      if (range) {
+        if (sectionChangeTimeoutId) {
+          clearTimeout(sectionChangeTimeoutId);
+          sectionChangeTimeoutId = null;
+        }
+        setIsChangingSection(false);
+        setIsVisible(true);
+        setIsOverlayMounted(true);
+        setFocusIndex(typeof event.detail?.index === 'number' ? event.detail.index : -1);
+        addParagraph(range, presentation);
+      }
+    };
+
+    const handleDisabled = (event: CustomEvent) => {
+      if (event.detail?.bookKey !== bookKey) return;
+      if (sectionChangeTimeoutId) {
+        clearTimeout(sectionChangeTimeoutId);
+        sectionChangeTimeoutId = null;
+      }
+      setIsOverlayMounted(false);
+      setIsChangingSection(false);
+      setTtsHighlight(null);
+      setTimeout(() => {
+        setIsVisible(false);
+        setParagraphs([]);
+      }, 300);
+    };
+
+    const handleSectionChanging = (event: CustomEvent) => {
+      if (event.detail?.bookKey !== bookKey) return;
+      setSectionDirection(event.detail?.direction || 'next');
+      setParagraphs([]);
+      setTtsHighlight(null);
+      setIsChangingSection(true);
+    };
+
+    // TTS word/sentence highlight within the focused paragraph (#3235). The hook
+    // sends character offsets relative to the paragraph start (+ its index, to
+    // guard against landing on the wrong paragraph) or a clear when TTS stops.
+    const handleTtsHighlight = (event: CustomEvent) => {
+      if (event.detail?.bookKey !== bookKey) return;
+      const detail = event.detail as
+        | { clear?: boolean; index?: number; start?: number; end?: number }
+        | undefined;
+      if (detail?.clear || typeof detail?.start !== 'number' || typeof detail?.end !== 'number') {
+        setTtsHighlight(null);
+        return;
+      }
+      setTtsHighlight({ index: detail.index ?? -1, start: detail.start, end: detail.end });
+    };
+
+    eventDispatcher.on('paragraph-focus', handleFocus);
+    eventDispatcher.on('paragraph-mode-disabled', handleDisabled);
+    eventDispatcher.on('paragraph-section-changing', handleSectionChanging);
+    eventDispatcher.on('paragraph-tts-highlight', handleTtsHighlight);
+
+    return () => {
+      if (sectionChangeTimeoutId) clearTimeout(sectionChangeTimeoutId);
+      eventDispatcher.off('paragraph-focus', handleFocus);
+      eventDispatcher.off('paragraph-mode-disabled', handleDisabled);
+      eventDispatcher.off('paragraph-section-changing', handleSectionChanging);
+      eventDispatcher.off('paragraph-tts-highlight', handleTtsHighlight);
+    };
+  }, [bookKey, addParagraph]);
+
+  // Focus the dialog when it opens (the dialog/alert pattern) so it receives
+  // keydowns directly via its own onKeyDown handler, regardless of where focus
+  // sat before — fixes Shift+P/Escape not toggling when focus was still inside
+  // the book iframe (#4717).
+  useEffect(() => {
+    if (!isVisible) return;
+    containerRef.current?.focus({ preventScroll: true });
+  }, [isVisible]);
+
+  // Keydown handler bound to the dialog element. Keeps every key inside the
+  // overlay (stopPropagation) so the global shortcut handler never sees it — the
+  // toggle therefore fires exactly once.
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      e.stopPropagation();
+
+      if (e.key === 'Escape' || e.key === 'Backspace') {
+        e.preventDefault();
+        onCloseRef.current?.();
+        return;
+      }
+
+      if (matchesShortcut(e, loadShortcuts().onToggleParagraphMode.keys)) {
+        e.preventDefault();
+        onCloseRef.current?.();
+        return;
+      }
+
+      const action = getParagraphActionForKey(e.key, activePresentation ?? viewSettings);
+      if (action === 'next') {
+        e.preventDefault();
+        eventDispatcher.dispatch('paragraph-next', { bookKey });
+      } else if (action === 'prev') {
+        e.preventDefault();
+        eventDispatcher.dispatch('paragraph-prev', { bookKey });
+      }
+    },
+    [activePresentation, bookKey, viewSettings],
+  );
+
+  useEffect(() => {
+    if (!isVisible) return;
+
+    const handleWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      const now = Date.now();
+      if (now - lastScrollTime.current < 150) return;
+      lastScrollTime.current = now;
+
+      if (e.deltaY > 0) {
+        eventDispatcher.dispatch('paragraph-next', { bookKey });
+      } else if (e.deltaY < 0) {
+        eventDispatcher.dispatch('paragraph-prev', { bookKey });
+      }
+    };
+
+    window.addEventListener('wheel', handleWheel, { passive: false, capture: true });
+    return () => window.removeEventListener('wheel', handleWheel, true);
+  }, [isVisible, bookKey]);
+
+  // Paint the current TTS word/sentence onto the cloned paragraph using the CSS
+  // Custom Highlight API (#3235). It highlights a Range without mutating the DOM
+  // and natively spans inline element boundaries (sentences), so the fade-in
+  // animation and the clone's markup stay untouched. Re-runs when the clone
+  // (paragraphs) or the offsets change; gated on the index so a highlight from a
+  // previous paragraph never paints the wrong text. No-op where unsupported.
+  useEffect(() => {
+    const registry = typeof CSS !== 'undefined' ? CSS.highlights : undefined;
+    if (!registry || typeof Highlight === 'undefined') return undefined;
+    const clear = () => {
+      registry.delete(TTS_HIGHLIGHT_NAME);
+    };
+
+    if (!ttsHighlight || ttsHighlight.index !== focusIndex) {
+      clear();
+      return clear;
+    }
+    const contentEl = contentRef.current?.querySelector('.paragraph-content');
+    if (!contentEl) {
+      clear();
+      return clear;
+    }
+    const base = document.createRange();
+    base.selectNodeContents(contentEl);
+    const range = getTextSubRange(base, ttsHighlight.start, ttsHighlight.end);
+    if (!range) {
+      clear();
+      return clear;
+    }
+    registry.set(TTS_HIGHLIGHT_NAME, new Highlight(range));
+    return clear;
+  }, [ttsHighlight, focusIndex, paragraphs]);
+
+  const handleTouchStart = useCallback(
+    (e: React.TouchEvent) => {
+      const touchStartY = e.touches[0]?.clientY ?? 0;
+      const touchStartX = e.touches[0]?.clientX ?? 0;
+
+      const handleTouchMove = (moveEvent: TouchEvent) => {
+        const touchEndY = moveEvent.touches[0]?.clientY ?? 0;
+        const touchEndX = moveEvent.touches[0]?.clientX ?? 0;
+        const diffY = touchStartY - touchEndY;
+        const diffX = touchStartX - touchEndX;
+        const horizontalAction =
+          diffX > 0
+            ? getParagraphActionForZone('right', activePresentation ?? viewSettings)
+            : getParagraphActionForZone('left', activePresentation ?? viewSettings);
+
+        if (layoutContext.vertical && Math.abs(diffY) > Math.abs(diffX) && Math.abs(diffY) > 50) {
+          eventDispatcher.dispatch(diffY > 0 ? 'paragraph-next' : 'paragraph-prev', { bookKey });
+          document.removeEventListener('touchmove', handleTouchMove);
+          document.removeEventListener('touchend', handleTouchEnd);
+        } else if (
+          !layoutContext.vertical &&
+          Math.abs(diffX) > Math.abs(diffY) &&
+          Math.abs(diffX) > 50 &&
+          horizontalAction
+        ) {
+          eventDispatcher.dispatch(
+            horizontalAction === 'next' ? 'paragraph-next' : 'paragraph-prev',
+            { bookKey },
+          );
+          document.removeEventListener('touchmove', handleTouchMove);
+          document.removeEventListener('touchend', handleTouchEnd);
+        }
+      };
+
+      const handleTouchEnd = () => {
+        document.removeEventListener('touchmove', handleTouchMove);
+        document.removeEventListener('touchend', handleTouchEnd);
+      };
+
+      document.addEventListener('touchmove', handleTouchMove);
+      document.addEventListener('touchend', handleTouchEnd);
+    },
+    [activePresentation, bookKey, layoutContext.vertical, viewSettings],
+  );
+
+  const handleBackdropClick = useCallback(
+    (e: React.MouseEvent) => {
+      // Keep keyboard focus on the dialog so Escape/Shift+P keep working after a
+      // tap moved focus elsewhere (e.g. into the book iframe).
+      containerRef.current?.focus({ preventScroll: true });
+      // Tapping the empty area around the paragraph used to exit, which made it
+      // easy to leave paragraph mode by accident. Reveal the controls instead so
+      // exiting stays an explicit action (the bar's exit button or Escape).
+      if (e.target === containerRef.current) {
+        eventDispatcher.dispatch('paragraph-show-controls', { bookKey });
+      }
+    },
+    [bookKey],
+  );
+
+  const lastTapTimeRef = useRef(0);
+  const handleContentClick = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      // Keep keyboard focus on the dialog so it keeps receiving keys after a tap.
+      containerRef.current?.focus({ preventScroll: true });
+
+      const now = Date.now();
+      if (now - lastTapTimeRef.current < 300) {
+        onCloseRef.current?.();
+        lastTapTimeRef.current = 0;
+        return;
+      }
+      lastTapTimeRef.current = now;
+
+      const rect = contentRef.current?.getBoundingClientRect();
+      if (!rect) return;
+
+      const clickX = e.clientX - rect.left;
+      const clickY = e.clientY - rect.top;
+
+      const zone = layoutContext.vertical
+        ? clickY < rect.height / 3
+          ? 'top'
+          : clickY > (rect.height * 2) / 3
+            ? 'bottom'
+            : null
+        : clickX < rect.width / 3
+          ? 'left'
+          : clickX > (rect.width * 2) / 3
+            ? 'right'
+            : null;
+
+      const action = zone
+        ? getParagraphActionForZone(zone, activePresentation ?? viewSettings)
+        : null;
+      if (action === 'prev') {
+        eventDispatcher.dispatch('paragraph-prev', { bookKey });
+      } else if (action === 'next') {
+        eventDispatcher.dispatch('paragraph-next', { bookKey });
+      } else {
+        // A tap in the neutral center zone reveals the controls so the exit
+        // button stays reachable on touch after the bar has auto-hidden.
+        eventDispatcher.dispatch('paragraph-show-controls', { bookKey });
+      }
+    },
+    [activePresentation, bookKey, layoutContext.vertical, viewSettings],
+  );
+
+  if (!isVisible) return null;
+
+  return (
+    // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
+    <div
+      ref={containerRef}
+      role='dialog'
+      aria-modal='true'
+      aria-label='Paragraph reading mode'
+      tabIndex={-1}
+      className={clsx(
+        'fixed inset-0 z-40',
+        'flex flex-col items-center justify-center',
+        // Solid page color, not a translucent blur of the book behind it — the
+        // blurred backdrop read as foreign chrome next to the rest of the app
+        // (#5275), and without the blur any translucency leaks ghost text.
+        'bg-base-100',
+        // The dialog is focused programmatically (so it receives keys); it is not
+        // a tab stop, so suppress the focus ring that would otherwise outline the
+        // whole viewport.
+        'outline-hidden',
+        'transition-opacity duration-300 ease-out',
+        isOverlayMounted ? 'opacity-100' : 'opacity-0',
+      )}
+      style={{
+        paddingTop: appService?.hasSafeAreaInset ? `${gridInsets.top}px` : undefined,
+        paddingBottom: appService?.hasSafeAreaInset ? `${gridInsets.bottom * 0.33}px` : undefined,
+      }}
+      onClick={handleBackdropClick}
+      onTouchStart={handleTouchStart}
+      onKeyDown={handleKeyDown}
+    >
+      {/* TTS "following audio" indicator, pinned top-center. Anchored below the
+          top safe-area inset the overlay already accounts for; idle/unsupported
+          render nothing so it stays out of the way when TTS isn't driving. */}
+      <div
+        className='pointer-events-none absolute inset-x-0 z-10 flex justify-center'
+        style={{
+          top: appService?.hasSafeAreaInset ? `calc(${gridInsets.top}px + 0.75rem)` : '0.75rem',
+        }}
+      >
+        {/* Only the indicator itself takes pointer events (its decoupled state is
+            a button); the wrapper stays transparent to backdrop/region taps. */}
+        <div className='pointer-events-auto'>
+          <TTSFollowIndicator status={ttsSyncStatus} onResume={onResumeTtsFollow} />
+        </div>
+      </div>
+      {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions */}
+      <div
+        ref={contentRef}
+        className={clsx(
+          'relative flex w-full cursor-default flex-col items-center px-4 sm:px-6',
+          layoutContext.vertical ? 'justify-center py-2' : '',
+        )}
+        onClick={handleContentClick}
+      >
+        <style>{`
+          .paragraph-content {
+            text-wrap: pretty;
+          }
+
+          .paragraph-content :is(h1, h2, h3, h4, h5, h6) {
+            line-height: 1.2;
+            text-wrap: balance;
+            margin-block-end: 0.45em;
+          }
+
+          .paragraph-content > :first-child {
+            margin-block-start: 0;
+          }
+
+          .paragraph-content > :last-child {
+            margin-block-end: 0;
+          }
+
+          ::highlight(${TTS_HIGHLIGHT_NAME}) {
+            ${ttsHighlightCss}
+          }
+        `}</style>
+        {activeParagraph ? (
+          <div
+            className={clsx(
+              // No surface of its own: the paragraph sits on the page color, so
+              // there is nothing left to round off (#5275).
+              'relative',
+              layoutContext.vertical
+                ? 'inline-flex items-center justify-center self-center overflow-visible'
+                : 'w-full overflow-auto',
+            )}
+            // The frame carries the paragraph font too so its ch-based width
+            // cap resolves against the (scaled) text, widening the column as
+            // the text grows instead of squeezing it into the same box (#5246).
+            style={{
+              ...frameStyle,
+              fontFamily: contentStyle.fontFamily,
+              fontSize: contentStyle.fontSize,
+            }}
+          >
+            <AnimatedParagraph
+              key={activeParagraph.id}
+              html={activeParagraph.html}
+              presentation={activeParagraph.presentation}
+              style={contentStyle}
+            />
+          </div>
+        ) : isChangingSection ? (
+          <SectionTransitionIndicator isVisible={isChangingSection} direction={sectionDirection} />
+        ) : null}
+      </div>
+    </div>
+  );
+};
+
+export default ParagraphOverlay;

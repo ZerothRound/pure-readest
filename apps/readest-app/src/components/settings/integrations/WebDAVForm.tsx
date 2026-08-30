@@ -1,0 +1,276 @@
+import React, { useState } from 'react';
+import clsx from 'clsx';
+import { MdVisibility, MdVisibilityOff } from 'react-icons/md';
+import { useEnv } from '@/context/EnvContext';
+import { useTranslation, type TranslationFunc } from '@/hooks/useTranslation';
+import { useSettingsStore } from '@/store/settingsStore';
+import { eventDispatcher } from '@/utils/event';
+import {
+  checkConnection,
+  normalizeRootPath,
+  WebDAVConnectResult,
+} from '@/services/sync/providers/webdav/client';
+import { buildWebDAVConnectSettings } from '@/services/sync/providers/webdav/connectSettings';
+import { SectionTitle, SettingsRow, SettingsSelect } from '../primitives';
+import FileSyncForm from './FileSyncForm';
+import WebDAVBrowsePane from './WebDAVBrowsePane';
+import { persistCloudProviderEnabled } from './cloudSync';
+
+/**
+ * Translate a connection-probe failure into a user-facing string. Each branch is
+ * a literal `_('...')` call so the i18next-scanner picks the keys up.
+ */
+const formatConnectError = (_: TranslationFunc, result: WebDAVConnectResult): string => {
+  switch (result.code) {
+    case 'SERVER_URL_REQUIRED':
+      return _('Server URL is required');
+    case 'AUTH_FAILED':
+      return _('Authentication failed');
+    case 'ROOT_NOT_FOUND':
+      return _('Root directory not found');
+    case 'UNEXPECTED_STATUS':
+      return _('Unexpected server response (status {{status}})', { status: result.status ?? 0 });
+    case 'NETWORK':
+    default:
+      return _('Network error');
+  }
+};
+
+/**
+ * WebDAV provider panel, embedded in the Integrations WebDAV sub-page (which
+ * owns the header). Two states:
+ *
+ * - **Active** (`webdav.enabled`): the shared {@link FileSyncForm} sync controls
+ *   + the {@link WebDAVBrowsePane} + a Disconnect button.
+ * - **Inactive**: the URL/credentials form (pre-filled from saved settings, so a
+ *   previously-configured server reconnects in one click). Connecting turns
+ *   WebDAV on; every other provider is left exactly as it was (#5062).
+ */
+const WebDAVForm: React.FC = () => {
+  const _ = useTranslation();
+  const { settings, setSettings, saveSettings } = useSettingsStore();
+  const { envConfig } = useEnv();
+
+  const stored = settings.webdav;
+  const isActive = !!stored?.enabled;
+
+  const [url, setUrl] = useState(stored?.serverUrl || '');
+  const [username, setUsername] = useState(stored?.username || '');
+  const [password, setPassword] = useState(stored?.password || '');
+  const [rootPath, setRootPath] = useState(stored?.rootPath || '/');
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+
+  const handleConnect = async () => {
+    if (!url || !username) return;
+    setIsConnecting(true);
+    const normalizedRoot = normalizeRootPath(rootPath);
+    const result = await checkConnection({ serverUrl: url, username, password }, normalizedRoot);
+    if (!result.success) {
+      eventDispatcher.dispatch('toast', {
+        type: 'error',
+        message: `${_('Failed to connect')}: ${formatConnectError(_, result)}`,
+      });
+      setIsConnecting(false);
+      return;
+    }
+    // Build the WebDAV connect settings (preserves deviceId / sub-toggles), then
+    // switch WebDAV on. Every other provider is left untouched (#5062).
+    // persistCloudProviderEnabled owns activation, persistence, and the
+    // cross-window provider broadcast.
+    await persistCloudProviderEnabled(envConfig, 'webdav', true, (s) => ({
+      ...s,
+      webdav: buildWebDAVConnectSettings(s.webdav, {
+        serverUrl: url,
+        username,
+        password,
+        rootPath: normalizedRoot,
+      }),
+    }));
+    setIsConnecting(false);
+    eventDispatcher.dispatch('toast', { type: 'info', message: _('Connected') });
+  };
+
+  const handleDisconnect = async () => {
+    // Switch WebDAV off only — other providers keep syncing. Credentials stay
+    // so a later reconnect is one click.
+    await persistCloudProviderEnabled(envConfig, 'webdav', false);
+    setShowPassword(false);
+    eventDispatcher.dispatch('toast', { type: 'info', message: _('Disconnected') });
+  };
+
+  const persistWebdav = async (patch: Partial<typeof stored>) => {
+    const latest = useSettingsStore.getState().settings;
+    const next = { ...latest, webdav: { ...latest.webdav, ...patch } };
+    setSettings(next);
+    await saveSettings(envConfig, next);
+  };
+
+  if (isActive) {
+    return (
+      <div className='space-y-5'>
+        <FileSyncForm kind='webdav' stored={stored} persist={persistWebdav} />
+
+        <SettingsRow label={_('Sync format')}>
+          <SettingsSelect
+            value={stored.syncFormat ?? 'both'}
+            onChange={(event) =>
+              void persistWebdav({ syncFormat: event.target.value as 'readest' | 'legado' | 'both' })
+            }
+            ariaLabel={_('Sync format')}
+            options={[
+              { value: 'both', label: _('Readest + Legado') },
+              { value: 'readest', label: _('Readest only') },
+              { value: 'legado', label: _('Legado only') },
+            ]}
+          />
+        </SettingsRow>
+
+        {(stored.syncFormat ?? 'both') !== 'readest' && (
+          <div className='space-y-1.5'>
+            <SectionTitle as='label' htmlFor='webdav-legado-root' className='block'>
+              {_('Legado Directory')}
+            </SectionTitle>
+            <input
+              id='webdav-legado-root'
+              type='text'
+              placeholder='/legado'
+              className='input eink-bordered h-11 w-full text-sm focus:outline-hidden'
+              spellCheck='false'
+              value={stored.legadoRootPath ?? '/legado'}
+              onChange={(event) => void persistWebdav({ legadoRootPath: event.target.value })}
+            />
+          </div>
+        )}
+
+        <WebDAVBrowsePane settings={stored} onUpdateSettings={persistWebdav} />
+
+        <div className='flex justify-end'>
+          <button
+            type='button'
+            onClick={handleDisconnect}
+            className={clsx(
+              'eink-bordered',
+              'h-10 rounded-lg px-4 text-sm font-medium',
+              'text-error hover:bg-error/10',
+              'transition-colors duration-150',
+              'focus-visible:ring-error/40 focus-visible:outline-hidden focus-visible:ring-2',
+            )}
+          >
+            {_('Disconnect')}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <form
+      className='space-y-4'
+      onSubmit={(e) => {
+        e.preventDefault();
+        handleConnect();
+      }}
+    >
+      <div className='space-y-1.5'>
+        <SectionTitle as='label' htmlFor='webdav-server-url' className='block'>
+          {_('Server URL')}
+        </SectionTitle>
+        <input
+          id='webdav-server-url'
+          type='text'
+          placeholder='https://dav.example.com'
+          className='input eink-bordered h-11 w-full text-sm focus:outline-hidden'
+          spellCheck='false'
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+        />
+      </div>
+
+      <div className='space-y-1.5'>
+        <SectionTitle as='label' htmlFor='webdav-username' className='block'>
+          {_('Username')}
+        </SectionTitle>
+        <input
+          id='webdav-username'
+          type='text'
+          placeholder={_('Your Username')}
+          className='input eink-bordered h-11 w-full text-sm focus:outline-hidden'
+          spellCheck='false'
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
+          autoComplete='username'
+        />
+      </div>
+
+      <div className='space-y-1.5'>
+        <SectionTitle as='label' htmlFor='webdav-password' className='block'>
+          {_('Password')}
+        </SectionTitle>
+        <div className='relative'>
+          <input
+            id='webdav-password'
+            type={showPassword ? 'text' : 'password'}
+            placeholder={_('Your Password')}
+            className='input eink-bordered h-11 w-full pe-11 text-sm focus:outline-hidden'
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            autoComplete='current-password'
+          />
+          <button
+            type='button'
+            onClick={() => setShowPassword((v) => !v)}
+            className={clsx(
+              'absolute end-2 top-1/2 -translate-y-1/2',
+              'flex h-8 w-8 items-center justify-center rounded-sm',
+              'text-base-content/60 hover:text-base-content',
+              'hover:bg-base-200/60 transition-colors duration-150',
+              'focus-visible:ring-base-content/15 focus-visible:outline-hidden focus-visible:ring-2',
+            )}
+            aria-label={showPassword ? _('Hide password') : _('Show password')}
+            title={showPassword ? _('Hide password') : _('Show password')}
+            tabIndex={-1}
+          >
+            {showPassword ? (
+              <MdVisibilityOff className='h-4 w-4' />
+            ) : (
+              <MdVisibility className='h-4 w-4' />
+            )}
+          </button>
+        </div>
+      </div>
+
+      <div className='space-y-1.5'>
+        <SectionTitle as='label' htmlFor='webdav-root' className='block'>
+          {_('Root Directory')}
+        </SectionTitle>
+        <input
+          id='webdav-root'
+          type='text'
+          placeholder='/'
+          className='input eink-bordered h-11 w-full text-sm focus:outline-hidden'
+          spellCheck='false'
+          value={rootPath}
+          onChange={(e) => setRootPath(e.target.value)}
+        />
+      </div>
+
+      <div className='flex justify-end pt-1'>
+        <button
+          type='submit'
+          disabled={isConnecting || !url || !username}
+          className={clsx(
+            'btn btn-contrast',
+            'h-10 min-h-10 rounded-lg border-0 px-5 text-sm font-medium',
+            'focus-visible:ring-base-content/40 focus-visible:outline-hidden focus-visible:ring-2',
+            isConnecting && 'opacity-60',
+          )}
+        >
+          {isConnecting ? <span className='loading loading-spinner loading-sm' /> : _('Connect')}
+        </button>
+      </div>
+    </form>
+  );
+};
+
+export default WebDAVForm;
