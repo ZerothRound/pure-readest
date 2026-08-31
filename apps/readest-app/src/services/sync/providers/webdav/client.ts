@@ -587,6 +587,27 @@ export const headFile = async (
 };
 
 /**
+ * PROPFIND with `Depth: 0` to determine whether a path exists on the server.
+ * Returns `true` on 207/200, `false` on 404, and `undefined` for any other
+ * outcome (including network failures) so callers can fall back to their
+ * original error handling instead of replacing a server conflict with an
+ * unrelated error.
+ */
+const probeExists = async (config: WebDAVConfig, path: string): Promise<boolean | undefined> => {
+  try {
+    const response = await requestWithMethod(config, path, 'PROPFIND', {
+      headers: { Depth: '0', 'Content-Type': 'application/xml; charset=utf-8' },
+      body: PROPFIND_BODY,
+    });
+    if (response.status === 207 || response.status === 200) return true;
+    if (response.status === 404) return false;
+    return undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+/**
  * MKCOL on a single path. 405 is the standard "directory already exists"
  * response on most WebDAV servers — we fold that into success so callers
  * can call this idempotently without first probing existence.
@@ -598,8 +619,14 @@ export const mkdir = async (config: WebDAVConfig, path: string): Promise<void> =
     throw new WebDAVRequestError('Authentication failed', response.status, 'AUTH_FAILED');
   }
   if (response.status === 409) {
-    // Conflict — usually means a parent directory is missing. Surface as
-    // not-found-style so the caller can re-run ensureDirectory.
+    // Conflict. On standard servers 409 means a parent directory is missing,
+    // but some servers (e.g. Jianguoyun/坚果云) also reply 409 when the
+    // collection already exists instead of the standard 405. Probe with
+    // PROPFIND to tell the two apart: an existing target is idempotent
+    // success; a missing target keeps the not-found-style error so the
+    // caller can re-run ensureDirectory.
+    const exists = await probeExists(config, path);
+    if (exists) return;
     throw new WebDAVRequestError('Parent directory missing', 409);
   }
   throw new WebDAVRequestError(`MKCOL failed with status ${response.status}`, response.status);
