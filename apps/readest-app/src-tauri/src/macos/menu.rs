@@ -41,7 +41,7 @@ pub fn setup_macos_menu(app: &AppHandle) -> tauri::Result<()> {
             .text("privacy_policy", "Privacy Policy")
             .separator()
             .text("report_issue", "Report An Issue...")
-            .text("readest_help", "Readest Help")
+            .text("readest_help", "pure-readest Help")
             .build()?,
     )?;
 

@@ -692,7 +692,7 @@ pub fn run() {
             let win_builder = win_builder
                 .decorations(true)
                 .title_bar_style(TitleBarStyle::Overlay)
-                .title("Readest");
+                .title("pure-readest");
 
             #[cfg(all(not(target_os = "macos"), desktop))]
             let win_builder = {
@@ -700,7 +700,7 @@ pub fn run() {
                     .decorations(false)
                     .visible(false)
                     .shadow(true)
-                    .title("Readest");
+                    .title("pure-readest");
 
                 #[cfg(target_os = "windows")]
                 {

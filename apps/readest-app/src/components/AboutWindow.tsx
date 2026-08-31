@@ -69,7 +69,7 @@ export const AboutWindow = () => {
     <Dialog
       id='about_window'
       isOpen={isOpen}
-      title={_('About Readest')}
+      title={_('About pure-readest')}
       onClose={handleClose}
       boxClassName='sm:w-[480px]! sm:max-w-(--breakpoint-sm)! sm:h-auto'
     >
@@ -80,7 +80,7 @@ export const AboutWindow = () => {
               <Image src='/icon.png' alt='App Logo' className='h-20 w-20' width={64} height={64} />
             </div>
             <div className='flex select-text flex-col items-center'>
-              <h2 className='mb-2 text-2xl font-bold'>Readest</h2>
+              <h2 className='mb-2 text-2xl font-bold'>pure-readest</h2>
               <button
                 type='button'
                 title={_('Copy')}

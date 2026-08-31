@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "Readest",
-  "mainBinaryName": "readest",
+  "productName": "pure-readest",
+  "mainBinaryName": "pure-readest",
   "identifier": "com.bilingify.readest",
   "version": "../package.json",
   "build": {
@@ -167,7 +167,7 @@
       "requireLiteralLeadingDot": false
     },
     "cli": {
-      "description": "Readest CLI",
+      "description": "pure-readest CLI",
       "args": [
         {
           "name": "file1",
