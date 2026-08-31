@@ -145,9 +145,7 @@ export function useTranslator({
         if (err instanceof Error && err.message.includes(ErrorCodes.DAILY_QUOTA_EXCEEDED)) {
           eventDispatcher.dispatch('toast', {
             timeout: 5000,
-            message: _(
-              'Daily translation quota reached. Upgrade your plan to continue using AI translations.',
-            ),
+            message: _('Daily translation quota reached. Try again later.'),
             type: 'error',
           });
           setSelectedProvider('azure');

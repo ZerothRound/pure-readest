@@ -55,19 +55,6 @@ afterEach(() => {
 });
 
 describe('yandex-translate proxy route', () => {
-  it('returns 403 before reading the body or fetching when unauthenticated', async () => {
-    validateUserAndTokenMock.mockResolvedValue({ user: null, token: null });
-    const request = makeReq();
-    const textSpy = vi.spyOn(request, 'text');
-
-    const res = await POST(request);
-
-    expect(res.status).toBe(403);
-    expect(await res.json()).toEqual({ error: 'Not authenticated' });
-    expect(textSpy).not.toHaveBeenCalled();
-    expect(fetchSpy).not.toHaveBeenCalled();
-  });
-
   it('returns 400 for an unknown endpoint without fetching', async () => {
     const res = await POST(makeReq('endpoint=nope'));
     expect(res.status).toBe(400);

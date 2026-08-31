@@ -1,5 +1,4 @@
 import { AppService } from '@/types/system';
-import { READEST_NODE_BASE_URL, READEST_WEB_BASE_URL } from './constants';
 import { getRuntimeConfig } from './runtimeConfig';
 
 declare global {
@@ -16,9 +15,11 @@ export const getBaseUrl = () =>
   getRuntimeConfig()?.apiBaseUrl ??
   process.env['API_BASE_URL'] ??
   process.env['NEXT_PUBLIC_API_BASE_URL'] ??
-  READEST_WEB_BASE_URL;
+  // Official Readest is removed in this fork: without an explicitly configured
+  // API base URL the app talks to its own origin (self-hosted / dev server).
+  '';
 export const getNodeBaseUrl = () =>
-  process.env['NEXT_PUBLIC_NODE_BASE_URL'] ?? READEST_NODE_BASE_URL;
+  process.env['NEXT_PUBLIC_NODE_BASE_URL'] ?? '';
 
 export const isMacPlatform = () =>
   typeof window !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.platform);

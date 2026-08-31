@@ -17,17 +17,13 @@
 
 import * as foliateProgress from 'foliate-js/progress.js';
 import env from '@/services/environment';
-import { SyncClient } from '@/libs/sync';
-import { isSyncCategoryEnabled } from '@/services/sync/syncCategories';
 import { useBookDataStore } from '@/store/bookDataStore';
 import { getBookProgress } from '@/store/readerProgressStore';
 import { DEFAULT_STATS_TRACKING_CONFIG, type StatBook } from '@/types/statistics';
 import type { TTSSession } from '@/services/tts/TTSSessionManager';
 import type { TTSController } from '@/services/tts/TTSController';
 import type { FoliateView } from '@/types/view';
-import { getAccessToken } from '@/utils/access';
 import { StatisticsDb } from './statisticsDb';
-import { pushStats } from './statsSync';
 import { TrackerCore, type FlushedEvent } from './trackerCore';
 
 /** How often playback is sampled. Also the renewal granularity below. */
@@ -340,15 +336,8 @@ export class TtsStatsRecorder {
   }
 
   async #push(): Promise<void> {
-    const db = this.#db;
-    if (!db || !isSyncCategoryEnabled('stats')) return;
-    // No AuthContext headless, so the session token stands in for `user`.
-    const token = await getAccessToken().catch(() => null);
-    if (!token) return;
-    try {
-      await pushStats(db, new SyncClient());
-    } catch (err) {
-      console.warn('[stats] failed to push TTS listening events:', err);
-    }
+    // Official Readest stats sync is removed in this fork: listening events
+    // stay in the local StatisticsDb and are never pushed to an account
+    // backend.
   }
 }

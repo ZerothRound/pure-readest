@@ -24,12 +24,6 @@ import {
 } from '@/app/reader/utils/annotatorUtil';
 import { renderNoteTemplate, formatBlockQuote } from '@/utils/note';
 import { getPublicCoverUrl } from '@/utils/cover';
-import {
-  AnnotationLinkType,
-  buildAnnotationAppUrl,
-  buildAnnotationUrl,
-  buildAnnotationWebUrl,
-} from '@/utils/deeplink';
 import Dialog from '@/components/Dialog';
 
 interface ExportMarkdownDialogProps {
@@ -104,7 +98,7 @@ const ExportMarkdownDialog: React.FC<ExportMarkdownDialogProps> = ({
 {% if annotation.note %}
 **${_('Note:')}** {{ annotation.note }}
 {% endif %}
-*{% if annotation.link %}[${_('Page:')} {{ annotation.page }}]({{ annotation.link }}){% else %}${_('Page:')} {{ annotation.page }}{% endif %} · ${_('Time:')} {{ annotation.timestamp | date('%Y-%m-%d %H:%M') }}*
+*${_('Page:')} {{ annotation.page }} · ${_('Time:')} {{ annotation.timestamp | date('%Y-%m-%d %H:%M') }}*
 {% endfor %}
 
 ---
@@ -114,9 +108,6 @@ const ExportMarkdownDialog: React.FC<ExportMarkdownDialogProps> = ({
     const noteExportConfig = viewSettings?.noteExportConfig || DEFAULT_NOTE_EXPORT_CONFIG;
     return {
       ...noteExportConfig,
-      // Configs persisted before link types existed fall back to the
-      // platform-aware default (app in the native app, web on the web).
-      linkType: noteExportConfig.linkType ?? DEFAULT_NOTE_EXPORT_CONFIG.linkType,
       customTemplate: noteExportConfig.customTemplate || defaultTemplate,
       // Configs persisted before color/style filtering existed have no
       // exclusion arrays; default to exporting everything.
@@ -275,13 +266,6 @@ const ExportMarkdownDialog: React.FC<ExportMarkdownDialogProps> = ({
             ...note,
             id: note.id,
             cfi: note.cfi,
-            bookHash,
-            link: buildAnnotationUrl(
-              { bookHash, noteId: note.id, cfi: note.cfi },
-              exportConfig.linkType,
-            ),
-            webLink: buildAnnotationWebUrl({ bookHash, noteId: note.id, cfi: note.cfi }),
-            appLink: buildAnnotationAppUrl({ bookHash, noteId: note.id, cfi: note.cfi }),
             text: note.text || '',
             note: note.note || '',
             style: note.style,
@@ -354,15 +338,7 @@ const ExportMarkdownDialog: React.FC<ExportMarkdownDialogProps> = ({
           let pageStr = '';
           if (exportConfig.includePageNumber && note.page) {
             const pageText = _('Page: {{number}}', { number: note.page });
-            if (bookHash && note.id) {
-              const url = buildAnnotationUrl(
-                { bookHash, noteId: note.id, cfi: note.cfi },
-                exportConfig.linkType,
-              );
-              pageStr = `[${pageText}](${url})`;
-            } else {
-              pageStr = pageText;
-            }
+            pageStr = pageText;
           }
           let timestampStr = '';
           if (exportConfig.includeTimestamp && note.updatedAt) {
@@ -601,22 +577,6 @@ const ExportMarkdownDialog: React.FC<ExportMarkdownDialogProps> = ({
               </label>
             </div>
 
-            <div className='flex items-center justify-between gap-3'>
-              <span className='text-sm'>{_('Annotation Link')}</span>
-              <select
-                value={exportConfig.linkType}
-                onChange={(e) =>
-                  setExportConfig((prev) => ({
-                    ...prev,
-                    linkType: e.target.value as AnnotationLinkType,
-                  }))
-                }
-                className='select select-sm eink-bordered'
-              >
-                <option value='app'>{_('App Link')}</option>
-                <option value='web'>{_('Web Link')}</option>
-              </select>
-            </div>
           </div>
         )}
 
@@ -817,18 +777,6 @@ const ExportMarkdownDialog: React.FC<ExportMarkdownDialogProps> = ({
                               annotation.timestamp
                             </code>{' '}
                             - {_('Annotation time')}
-                          </li>
-                          <li className='ml-8'>
-                            <code className='bg-base-300 rounded-sm px-1'>annotation.link</code> -{' '}
-                            {_('Annotation link (follows the selected Link Type)')}
-                          </li>
-                          <li className='ml-8'>
-                            <code className='bg-base-300 rounded-sm px-1'>annotation.appLink</code>{' '}
-                            - {_('App deeplink (readest://)')}
-                          </li>
-                          <li className='ml-8'>
-                            <code className='bg-base-300 rounded-sm px-1'>annotation.webLink</code>{' '}
-                            - {_('Universal web link (https://)')}
                           </li>
                         </ul>
                       </div>

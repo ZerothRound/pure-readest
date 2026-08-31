@@ -58,15 +58,14 @@ export const hasAnyThirdPartyEnabled = (settings: SystemSettings | null | undefi
 /**
  * Whether Readest Cloud syncs the library channels on this device.
  *
- * The `??` is load-bearing: an absent `readestCloud.enabled` reproduces the
- * pre-#5062 exclusive derivation (Readest Cloud owned the library exactly when
- * no third-party provider was enabled), so upgrading users need no migration
- * and disconnecting the last third-party provider still falls back to Readest
- * Cloud. Once the user touches a Cloud Sync checkbox the flag is explicit and
- * wins.
+ * Readest Cloud is the official account-backed sync and is removed in this
+ * fork (pure-readest): there is no Readest account, so it is NEVER enabled,
+ * regardless of what a settings backup from upstream may contain. Third-party
+ * backends (WebDAV, Drive, S3, OneDrive, iCloud) are the only cloud sync
+ * providers and need no account.
  */
-export const isReadestCloudEnabled = (settings: SystemSettings | null | undefined): boolean =>
-  settings?.readestCloud?.enabled ?? !hasAnyThirdPartyEnabled(settings);
+export const isReadestCloudEnabled = (_settings: SystemSettings | null | undefined): boolean =>
+  false;
 
 /** Every provider syncing the library on this device, Readest Cloud first. */
 export const getCloudSyncProviders = (

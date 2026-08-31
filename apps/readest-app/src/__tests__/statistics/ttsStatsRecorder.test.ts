@@ -273,7 +273,7 @@ describe('TtsStatsRecorder', () => {
     warn.mockRestore();
   });
 
-  it('pushes stats on stop when stats sync is enabled and the user is signed in', async () => {
+  it('never pushes stats even when a token exists (official stats sync removed)', async () => {
     setViewPage(9, 200);
     mocks.syncEnabled = true;
     mocks.accessToken = 'token';
@@ -283,7 +283,7 @@ describe('TtsStatsRecorder', () => {
     await vi.advanceTimersByTimeAsync(60_000);
     await recorder.stop();
 
-    expect(mocks.pushStats).toHaveBeenCalled();
+    expect(mocks.pushStats).not.toHaveBeenCalled();
   });
 
   it('does not push stats when the user is signed out', async () => {

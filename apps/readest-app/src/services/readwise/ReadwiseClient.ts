@@ -3,7 +3,6 @@ import { ReadwiseSettings } from '@/types/settings';
 import { READWISE_API_BASE_URL } from '@/services/constants';
 import { isTauriAppPlatform } from '@/services/environment';
 import { isPublicImageUrl } from '@/utils/cover';
-import { buildAnnotationWebUrl } from '@/utils/deeplink';
 import { fetch as tauriFetch } from '@tauri-apps/plugin-http';
 
 const READEST_TO_READWISE_COLOR: Record<HighlightColor, string> = {
@@ -84,11 +83,6 @@ export class ReadwiseClient {
       location: note.page,
       location_type: 'page',
       highlighted_at: new Date(note.createdAt).toISOString(),
-      highlight_url: buildAnnotationWebUrl({
-        bookHash: book.hash,
-        noteId: note.id,
-        cfi: note.cfi,
-      }),
       color: note.color ? (READEST_TO_READWISE_COLOR[note.color] ?? 'yellow') : 'yellow',
     }));
 

@@ -56,8 +56,6 @@ import { runSimpleCC } from '@/utils/simplecc';
 import { getWordCount, isSingleLookupTerm } from '@/utils/word';
 import { getIndexFromCfi } from '@/utils/cfi';
 import { writeTextToClipboard } from '@/utils/clipboard';
-import { buildAnnotationUrl } from '@/utils/deeplink';
-import { DEFAULT_NOTE_EXPORT_CONFIG } from '@/services/constants';
 import { canShareText, shareSelectedText } from '@/utils/share';
 import { getToolbarToolTypes, supportsProofread } from '@/utils/annotationToolbar';
 import { AnnotationToolType } from '@/types/annotator';
@@ -1260,32 +1258,6 @@ const Annotator: React.FC<{ bookKey: string; contentInsets: Insets }> = ({
     }
   };
 
-  // Copy a permanent link to what is under the selection, so a highlight can be
-  // sent somewhere the moment it is made instead of hunting for it in the
-  // sidebar notebook (#5452). When no note is anchored here yet the link still
-  // points at the position — resolution keys off the cfi, the note id is only
-  // required to be present.
-  const handleCopyLink = () => {
-    if (!selection) return;
-    const cfi =
-      selection.cfi || (selection.popup ? null : view?.getCFI(selection.index, selection.range));
-    if (!cfi) return;
-    const noteId = config.booknotes?.find((note) => note.cfi === cfi && !note.deletedAt)?.id;
-    const linkType = viewSettings.noteExportConfig?.linkType ?? DEFAULT_NOTE_EXPORT_CONFIG.linkType;
-    const url = buildAnnotationUrl(
-      { bookHash: bookKey.split('-')[0]!, noteId: noteId ?? uniqueId(), cfi },
-      linkType,
-    );
-    void writeTextToClipboard(url);
-    eventDispatcher.dispatch('toast', {
-      type: 'info',
-      message: _('Copied to clipboard'),
-      className: 'whitespace-nowrap',
-      timeout: 2000,
-    });
-    handleDismissPopupAndSelection();
-  };
-
   const handleShare = () => {
     if (!selection?.text) return;
     const position = trianglePosition
@@ -2039,12 +2011,9 @@ const Annotator: React.FC<{ bookKey: string; contentInsets: Insets }> = ({
       case 'copy':
         return { tooltipText: _(label), Icon, onClick: handleCopy };
       case 'copylink':
-        return {
-          tooltipText: _(label),
-          Icon,
-          onClick: handleCopyLink,
-          disabled: popupSelectionNoCfi,
-        };
+        // Official Readest annotation links are removed in this fork: the
+        // copy-link tool falls back to copying the selected text.
+        return { tooltipText: _(label), Icon, onClick: handleCopy };
       case 'highlight':
         return {
           tooltipText: selectionAnnotated ? _('Delete Highlight') : _(label),

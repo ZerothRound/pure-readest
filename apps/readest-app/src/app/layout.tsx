@@ -7,17 +7,14 @@ import Providers from '@/components/Providers';
 
 import '../styles/globals.css';
 
-const url = 'https://web.readest.com/';
 const title = 'Readest — Where You Read, Digest and Get Insight';
 const description =
   'Discover Readest, the ultimate online ebook reader for immersive and organized reading. ' +
   'Enjoy seamless access to your digital library, powerful tools for highlighting, bookmarking, ' +
   'and note-taking, and support for multiple book views. ' +
   'Perfect for deep reading, analysis, and understanding. Explore now!';
-const previewImage = 'https://cdn.readest.com/images/open_graph_preview_read_now.png';
 
 export const metadata: Metadata = {
-  metadataBase: new URL(url),
   title: {
     default: title,
     template: '%s | Readest',
@@ -43,21 +40,13 @@ export const metadata: Metadata = {
   },
   openGraph: {
     type: 'website',
-    url,
     title,
     description,
-    images: [previewImage],
   },
   twitter: {
     card: 'summary_large_image',
     title,
     description,
-    images: [previewImage],
-  },
-  other: {
-    'apple-mobile-web-app-capable': 'yes',
-    'twitter:domain': 'web.readest.com',
-    'twitter:url': url,
   },
 };
 

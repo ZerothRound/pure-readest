@@ -126,14 +126,16 @@ describe('fetchWithAuth', () => {
     vi.restoreAllMocks();
   });
 
-  it('throws when not authenticated (no token)', async () => {
+  it('proceeds without Authorization when no token exists (official login removed)', async () => {
     vi.mocked(getAccessToken).mockResolvedValueOnce(null);
+    mockFetch.mockResolvedValueOnce(new Response('OK', { status: 200 }));
 
-    await expect(fetchWithAuth('https://api.example.com/data', { method: 'GET' })).rejects.toThrow(
-      'Not authenticated',
-    );
+    const response = await fetchWithAuth('https://api.example.com/data', { method: 'GET' });
 
-    expect(mockFetch).not.toHaveBeenCalled();
+    expect(response.status).toBe(200);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    const opts = mockFetch.mock.calls[0]![1];
+    expect(opts.headers.Authorization).toBeUndefined();
   });
 
   it('adds Authorization header with Bearer token', async () => {

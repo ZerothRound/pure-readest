@@ -25,9 +25,8 @@ interface UseMakeBookAvailableOptions {
 /**
  * "Get this book's file onto the device, downloading it if needed." Shared by
  * every route into the reader that can be handed a cloud-synced book: the
- * library's own taps ({@link import('@/app/library/hooks/useOpenBook')}) and
- * home-screen widget taps ({@link import('./useOpenBookLink')}), which reach
- * the reader without passing through the shelf at all.
+ * library's own taps ({@link import('@/app/library/hooks/useOpenBook')}), which
+ * reach the reader without passing through the shelf at all.
  */
 export const useMakeBookAvailable = ({
   setLoading,

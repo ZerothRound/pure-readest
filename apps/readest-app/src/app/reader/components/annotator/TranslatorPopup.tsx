@@ -63,7 +63,7 @@ const TranslatorPopup: React.FC<TranslatorPopupProps> = ({
   // network error), shown under the generic message so a failure can be
   // diagnosed from the popup itself (#5823).
   const [errorDetail, setErrorDetail] = useState<string | null>(null);
-  const { translate, translator, translators } = useTranslator({
+  const { translate, translators } = useTranslator({
     provider,
     sourceLang,
     targetLang,
@@ -124,14 +124,10 @@ const TranslatorPopup: React.FC<TranslatorPopupProps> = ({
         }
       } catch (err) {
         console.error(err);
-        // Only blame a missing login when this provider actually needs one;
-        // Azure/Google/Yandex run without a Readest account in the app.
-        if (translator?.authRequired && !token) {
-          setError(_('Unable to fetch the translation. Please log in first and try again.'));
-        } else {
-          setError(_('Unable to fetch the translation. Try again later.'));
-          setErrorDetail(err instanceof Error ? err.message : String(err));
-        }
+        // Official Readest account login is removed in this fork; no provider
+        // can require a Readest login, so surface the generic failure.
+        setError(_('Unable to fetch the translation. Try again later.'));
+        setErrorDetail(err instanceof Error ? err.message : String(err));
       } finally {
         setLoading(false);
       }

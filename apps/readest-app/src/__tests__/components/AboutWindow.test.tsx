@@ -20,16 +20,7 @@ vi.mock('@/hooks/useTranslation', () => ({
 }));
 
 vi.mock('@/context/EnvContext', () => ({
-  useEnv: () => ({ appService: { hasUpdater: true } }),
-}));
-
-vi.mock('@/store/settingsStore', () => ({
-  useSettingsStore: () => ({ settings: { updateChannel: 'stable' } }),
-}));
-
-vi.mock('@/helpers/updater', () => ({
-  checkForAppUpdates: vi.fn(),
-  checkAppReleaseNotes: vi.fn(),
+  useEnv: () => ({ appService: {} }),
 }));
 
 vi.mock('@/utils/ua', () => ({
@@ -53,7 +44,6 @@ vi.mock('next/image', () => ({
 }));
 
 vi.mock('@/components/SupportLinks', () => ({ default: () => null }));
-vi.mock('@/components/LegalLinks', () => ({ default: () => null }));
 vi.mock('@/components/Link', () => ({
   default: ({ children }: { children: ReactNode }) => <span>{children}</span>,
 }));

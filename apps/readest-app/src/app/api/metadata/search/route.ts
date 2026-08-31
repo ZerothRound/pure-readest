@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { MetadataService } from '@/services/metadata/service';
 import { SearchRequest } from '@/services/metadata/types';
-import { validateUserAndToken } from '@/utils/access';
 
 interface ApiResponse<T> {
   success: boolean;
@@ -85,11 +84,6 @@ function getMetadataService(): MetadataService {
 }
 
 export async function POST(request: NextRequest) {
-  const { user, token } = await validateUserAndToken(request.headers.get('authorization'));
-  if (!user || !token) {
-    return NextResponse.json({ error: 'Not authenticated' }, { status: 403 });
-  }
-
   const startTime = Date.now();
 
   try {

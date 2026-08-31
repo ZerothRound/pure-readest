@@ -6,6 +6,17 @@ vi.mock('@/services/transferManager', () => ({
   transferManager: { queueUpload: vi.fn() },
 }));
 
+// Readest Cloud storage is removed in this fork; pin the gate open so these
+// tests keep covering ingestFile's upload-queue decision (the gate-off
+// semantics are covered by the cloudSyncProvider tests).
+vi.mock('@/services/sync/cloudSyncProvider', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('@/services/sync/cloudSyncProvider')>();
+  return {
+    ...mod,
+    isReadestCloudStorageActive: () => true,
+  };
+});
+
 import { ingestFile } from '@/services/ingestService';
 import { transferManager } from '@/services/transferManager';
 import type { Book } from '@/types/book';

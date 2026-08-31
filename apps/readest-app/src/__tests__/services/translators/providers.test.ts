@@ -23,18 +23,6 @@ vi.mock('@tauri-apps/plugin-http', () => ({
   fetch: vi.fn(),
 }));
 
-// Stub Supabase so importing the full providers registry (which pulls in
-// deepl.ts → @/utils/access → @/utils/supabase) doesn't instantiate a real
-// GoTrueClient on every `vi.resetModules()` round. Without this, each test
-// that dynamically imports the registry logs a "Multiple GoTrueClient
-// instances" warning from the real Supabase client.
-vi.mock('@/utils/supabase', () => ({
-  supabase: {
-    auth: { getSession: vi.fn().mockResolvedValue({ data: { session: null } }) },
-    from: vi.fn(),
-  },
-}));
-
 vi.mock('@/utils/simplecc', () => ({
   initSimpleCC: vi.fn(async () => {}),
   // Stand-in for the real OpenCC conversion; the assertions only need to see
@@ -301,14 +289,24 @@ describe('yandexProvider', () => {
     expect(mockTauriFetch).not.toHaveBeenCalled();
   });
 
-  it('rejects web requests without a Readest token before fetching', async () => {
+  it('routes web requests without a Readest token through the proxy', async () => {
     vi.mocked(isTauriAppPlatform).mockReturnValue(false);
+    mockFetch.mockImplementation(async (url: string, init?: { body?: string }) => {
+      if (String(url).includes('endpoint=session')) {
+        return sessionResponse();
+      }
+      const text = new URLSearchParams(init?.body ?? '').get('text') ?? '';
+      return { ok: true, json: async () => ({ code: 200, lang: 'en-fr', text: [`<${text}>`] }) };
+    });
 
     const { yandexProvider } = await import('@/services/translators/providers/yandex');
-    await expect(yandexProvider.translate(['Hello'], 'en', 'fr')).rejects.toThrow(
-      'yandex translate requires authentication in web builds',
-    );
-    expect(mockFetch).not.toHaveBeenCalled();
+    const result = await yandexProvider.translate(['Hello'], 'en', 'fr');
+    expect(result).toEqual(['<Hello>']);
+    // No official Readest token exists in this fork, so the proxy is called
+    // with the local placeholder instead of failing auth.
+    for (const [, init] of mockFetch.mock.calls) {
+      expect(init.headers['Authorization']).toBe('Bearer local');
+    }
     expect(mockTauriFetch).not.toHaveBeenCalled();
   });
 
@@ -809,9 +807,9 @@ describe('azureProvider', () => {
     expect(urls.some((url) => url.includes('bing.com'))).toBe(false);
   });
 
-  it('requires authentication only in web builds', async () => {
+  it('never requires authentication (Readest login removed)', async () => {
     const { azureProvider } = await import('@/services/translators/providers/azure');
-    expect(azureProvider.authRequired).toBe(true);
+    expect(azureProvider.authRequired).toBe(false);
 
     vi.mocked(isTauriAppPlatform).mockReturnValue(true);
     expect(azureProvider.authRequired).toBe(false);
@@ -931,12 +929,33 @@ describe('azureProvider', () => {
     expect(translateCalls).toHaveLength(24);
   });
 
-  it('rejects in web builds when there is no user token', async () => {
+  it('uses the local placeholder in web builds when there is no user token', async () => {
     const { azureProvider } = await import('@/services/translators/providers/azure');
-    await expect(azureProvider.translate(['Hello'], 'en', 'fr')).rejects.toThrow(
-      'azure translate requires authentication in web builds',
-    );
-    expect(mockFetch).not.toHaveBeenCalled();
+    mockFetch.mockImplementation(async (url: string) => {
+      if (String(url).includes('endpoint=auth')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            ig: 'IG1',
+            iid: 'translator.5025',
+            key: '1',
+            token: 't',
+            expiresAt: Date.now() + 3_600_000,
+          }),
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => [{ translations: [{ text: 'Bonjour' }] }],
+      };
+    });
+    const result = await azureProvider.translate(['Hello'], 'en', 'fr');
+    expect(result).toEqual(['Bonjour']);
+    for (const [, init] of mockFetch.mock.calls) {
+      expect(init.headers?.['Authorization']).toBe('Bearer local');
+    }
   });
 
   it('scrapes bing directly on Tauri, bypassing the proxy', async () => {
@@ -1196,14 +1215,14 @@ describe('provider registry availability handling', () => {
     expect(names).toContain('yandex');
   });
 
-  it('requires authentication for yandex only in web builds', async () => {
+  it('is available without authentication (Readest login removed)', async () => {
     const { getTranslator, isTranslatorAvailable } = await import(
       '@/services/translators/providers'
     );
     const yandex = getTranslator('yandex')!;
 
     vi.mocked(isTauriAppPlatform).mockReturnValue(false);
-    expect(isTranslatorAvailable(yandex, false)).toBe(false);
+    expect(isTranslatorAvailable(yandex, false)).toBe(true);
     expect(isTranslatorAvailable(yandex, true)).toBe(true);
 
     vi.mocked(isTauriAppPlatform).mockReturnValue(true);

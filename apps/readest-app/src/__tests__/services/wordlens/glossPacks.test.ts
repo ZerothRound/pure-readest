@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import type { AppService, BaseDir } from '@/types/system';
 import type { GlossIndexData } from '@/services/wordlens/types';
 import type {
@@ -82,7 +82,14 @@ const makePack = (overrides: Partial<WordLensPack>, sha: string): WordLensPack =
 
 describe('glossPacks', () => {
   beforeEach(() => {
+    // The official CDN is removed in this fork; tests exercise the download
+    // machinery against a configured (self-hosted) mirror.
+    vi.stubEnv('NEXT_PUBLIC_WORDLENS_CDN_BASE', 'https://example.com/wordlens');
     vi.resetModules();
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   describe('downloadViaTempFile', () => {

@@ -11,13 +11,13 @@ export const fetchWithTimeout = (url: string, options: RequestInit = {}, timeout
 };
 
 export const fetchWithAuth = async (url: string, options: RequestInit) => {
+  // Official Readest login is removed in this fork: there is never a bearer
+  // token, and local endpoints (metadata search, edge TTS) must work without
+  // one. Attach Authorization only when a token somehow exists.
   const token = await getAccessToken();
-  if (!token) {
-    throw new Error('Not authenticated');
-  }
   const headers = {
     ...options.headers,
-    Authorization: `Bearer ${token}`,
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
   };
 
   const response = await fetch(url, { ...options, headers });

@@ -64,17 +64,10 @@ import {
   CJK_EXCLUDE_PATTENS,
   CJK_FONTS_PATTENS,
   BOOK_IDS_SEPARATOR,
-  DOWNLOAD_READEST_URL,
-  READEST_WEB_BASE_URL,
-  READEST_NODE_BASE_URL,
-  READEST_UPDATER_FILE,
-  READEST_CHANGELOG_FILE,
-  READEST_PUBLIC_STORAGE_BASE_URL,
   READEST_OPDS_USER_AGENT,
   SYNC_PROGRESS_INTERVAL_SEC,
   SYNC_NOTES_INTERVAL_SEC,
   SYNC_BOOKS_INTERVAL_SEC,
-  CHECK_UPDATE_INTERVAL_SEC,
   MAX_ZOOM_LEVEL,
   MIN_ZOOM_LEVEL,
   ZOOM_STEP,
@@ -876,32 +869,6 @@ describe('services/constants', () => {
       expect(BOOK_IDS_SEPARATOR.length).toBe(1);
     });
 
-    it('DOWNLOAD_READEST_URL is a valid URL', () => {
-      expect(DOWNLOAD_READEST_URL).toMatch(/^https:\/\//);
-    });
-
-    it('READEST_WEB_BASE_URL is a valid URL', () => {
-      expect(READEST_WEB_BASE_URL).toMatch(/^https:\/\//);
-    });
-
-    it('READEST_NODE_BASE_URL is a valid URL', () => {
-      expect(READEST_NODE_BASE_URL).toMatch(/^https:\/\//);
-    });
-
-    it('READEST_UPDATER_FILE is a URL ending with .json', () => {
-      expect(READEST_UPDATER_FILE).toMatch(/^https:\/\//);
-      expect(READEST_UPDATER_FILE).toMatch(/\.json$/);
-    });
-
-    it('READEST_CHANGELOG_FILE is a URL ending with .json', () => {
-      expect(READEST_CHANGELOG_FILE).toMatch(/^https:\/\//);
-      expect(READEST_CHANGELOG_FILE).toMatch(/\.json$/);
-    });
-
-    it('READEST_PUBLIC_STORAGE_BASE_URL is a valid URL', () => {
-      expect(READEST_PUBLIC_STORAGE_BASE_URL).toMatch(/^https:\/\//);
-    });
-
     it('READEST_OPDS_USER_AGENT is a non-empty string', () => {
       expect(typeof READEST_OPDS_USER_AGENT).toBe('string');
       expect(READEST_OPDS_USER_AGENT.length).toBeGreaterThan(0);
@@ -927,10 +894,6 @@ describe('services/constants', () => {
       expect(SYNC_BOOKS_INTERVAL_SEC).toBeGreaterThan(0);
     });
 
-    it('CHECK_UPDATE_INTERVAL_SEC is at least one hour', () => {
-      expect(typeof CHECK_UPDATE_INTERVAL_SEC).toBe('number');
-      expect(CHECK_UPDATE_INTERVAL_SEC).toBeGreaterThanOrEqual(3600);
-    });
   });
 
   // ---------------------------------------------------------------------------

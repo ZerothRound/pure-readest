@@ -6,7 +6,12 @@ import { webDownload } from '@/utils/transfer';
 import { GlossIndex } from './glossIndex';
 import type { GlossIndexData } from './types';
 
-export const WORDLENS_CDN_BASE = 'https://cdn.readest.com/wordlens';
+/**
+ * Official Readest WordLens CDN removed in this fork. Remote gloss-pack
+ * downloads are disabled unless the build configures a self-hosted mirror via
+ * `NEXT_PUBLIC_WORDLENS_CDN_BASE`; locally persisted packs still work.
+ */
+export const WORDLENS_CDN_BASE = process.env['NEXT_PUBLIC_WORDLENS_CDN_BASE'] || '';
 const STORE_DIR = 'wordlens'; // relative dir under BaseDir 'Data'
 const MANIFEST_FILE = 'manifest.json';
 
@@ -145,6 +150,7 @@ export const fetchManifest = async (
   opts?: { download?: BytesDownloader; force?: boolean },
 ): Promise<WordLensManifest | null> => {
   if (manifestPromise && !opts?.force) return manifestPromise;
+  if (!WORDLENS_CDN_BASE) return readPersistedManifest(appService);
   const download = getDownloader(appService, opts?.download);
   manifestPromise = (async () => {
     try {
@@ -182,6 +188,7 @@ const ensurePackUncached = async (
   // Reader path with auto-download off: never hit the network for an uncached
   // pack. The settings panel passes allowDownload:true for explicit downloads.
   if (opts?.allowDownload === false) return null;
+  if (!WORDLENS_CDN_BASE) return null;
 
   const download = getDownloader(appService, opts?.download);
   const url = `${WORDLENS_CDN_BASE}/${pack.file}?v=${pack.sha256.slice(0, 8)}`;

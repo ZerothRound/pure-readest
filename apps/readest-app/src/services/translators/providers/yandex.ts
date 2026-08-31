@@ -96,15 +96,15 @@ const getRequestTarget = (endpoint: 'session' | 'translate', token?: string | nu
       direct: true,
     };
   }
-  if (!token) {
-    throw new Error('yandex translate requires authentication in web builds');
-  }
+  // Official Readest login is removed in this fork: the web proxy no longer
+  // validates a bearer token, so a placeholder is sent when no account token
+  // exists.
   return {
     fetchImpl: window.fetch.bind(window),
     url: `${PROXY_URL}?endpoint=${endpoint}`,
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',
-      Authorization: `Bearer ${token}`,
+      Authorization: `Bearer ${token ?? 'local'}`,
     },
     direct: false,
   };
@@ -248,7 +248,7 @@ export const yandexProvider: TranslationProvider = {
   name: 'yandex',
   label: _('Yandex Translate'),
   get authRequired() {
-    return !isTauriAppPlatform();
+    return false;
   },
   translate: async (
     texts: string[],

@@ -162,40 +162,20 @@ describe('navigateToReader', () => {
 });
 
 describe('navigateToLogin', () => {
-  test('navigates to /auth with redirect from current path', () => {
-    Object.defineProperty(window, 'location', {
-      value: { pathname: '/library', search: '?q=test' },
-      writable: true,
-    });
-
+  test('navigates to the library (official login removed)', () => {
     const router = mockRouter();
     navigateToLogin(router);
 
-    const url = router.push.mock.calls[0]![0] as string;
-    expect(url).toContain('/auth?redirect=');
-    expect(url).toContain(encodeURIComponent('/library?q=test'));
-  });
-
-  test('uses / as redirect when already on /auth', () => {
-    Object.defineProperty(window, 'location', {
-      value: { pathname: '/auth', search: '' },
-      writable: true,
-    });
-
-    const router = mockRouter();
-    navigateToLogin(router);
-
-    const url = router.push.mock.calls[0]![0] as string;
-    expect(url).toBe('/auth?redirect=%2F');
+    expect(router.push).toHaveBeenCalledWith('/library');
   });
 });
 
 describe('navigateToProfile', () => {
-  test('navigates to /user', () => {
+  test('navigates to the library (account page removed)', () => {
     const router = mockRouter();
     navigateToProfile(router);
 
-    expect(router.push).toHaveBeenCalledWith('/user');
+    expect(router.push).toHaveBeenCalledWith('/library');
   });
 });
 
@@ -256,60 +236,20 @@ describe('redirectToLibrary', () => {
 });
 
 describe('navigateToResetPassword', () => {
-  test('navigates to /auth/recovery with redirect', () => {
-    Object.defineProperty(window, 'location', {
-      value: { pathname: '/settings', search: '' },
-      writable: true,
-    });
-
+  test('navigates to the library (password recovery removed)', () => {
     const router = mockRouter();
     navigateToResetPassword(router);
 
-    const url = router.push.mock.calls[0]![0] as string;
-    expect(url).toContain('/auth/recovery?redirect=');
-    expect(url).toContain(encodeURIComponent('/settings'));
-  });
-
-  test('uses / as redirect when on /auth', () => {
-    Object.defineProperty(window, 'location', {
-      value: { pathname: '/auth', search: '' },
-      writable: true,
-    });
-
-    const router = mockRouter();
-    navigateToResetPassword(router);
-
-    const url = router.push.mock.calls[0]![0] as string;
-    expect(url).toBe('/auth/recovery?redirect=%2F');
+    expect(router.push).toHaveBeenCalledWith('/library');
   });
 });
 
 describe('navigateToUpdatePassword', () => {
-  test('navigates to /auth/update with redirect', () => {
-    Object.defineProperty(window, 'location', {
-      value: { pathname: '/user', search: '?tab=security' },
-      writable: true,
-    });
-
+  test('navigates to the library (email update removed)', () => {
     const router = mockRouter();
     navigateToUpdatePassword(router);
 
-    const url = router.push.mock.calls[0]![0] as string;
-    expect(url).toContain('/auth/update?redirect=');
-    expect(url).toContain(encodeURIComponent('/user?tab=security'));
-  });
-
-  test('uses / as redirect when on /auth', () => {
-    Object.defineProperty(window, 'location', {
-      value: { pathname: '/auth', search: '' },
-      writable: true,
-    });
-
-    const router = mockRouter();
-    navigateToUpdatePassword(router);
-
-    const url = router.push.mock.calls[0]![0] as string;
-    expect(url).toBe('/auth/update?redirect=%2F');
+    expect(router.push).toHaveBeenCalledWith('/library');
   });
 });
 

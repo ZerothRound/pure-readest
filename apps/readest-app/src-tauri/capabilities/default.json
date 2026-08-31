@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "enables the default permissions",
-  "windows": ["main", "updater", "reader-*"],
+  "windows": ["main", "reader-*"],
   "permissions": [
     "core:default",
     "fs:default",
@@ -217,7 +217,6 @@
     "allow-get-environment-variable",
     "allow-get-executable-dir",
     "allow-set-webview-info",
-    "allow-is-updater-disabled",
     "allow-allow-paths-in-scopes",
     "allow-optimize-cover-thumbnails",
     "allow-read-dir",

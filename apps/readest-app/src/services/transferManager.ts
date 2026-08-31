@@ -507,7 +507,9 @@ class TransferManager {
           if (errorMessage.includes('Not authenticated')) {
             eventDispatcher.dispatch('toast', {
               type: 'error',
-              message: _('Please log in to continue'),
+              message: _(
+                'Not authenticated: this build has no official Readest account for cloud transfers',
+              ),
             });
           } else if (isQuotaError) {
             this.recordQuotaFailure();

@@ -13,6 +13,17 @@ vi.mock('@/utils/event', () => ({
   },
 }));
 
+// Readest Cloud (the official account-backed storage) is removed in this fork,
+// so `isReadestCloudStorageActive` is always false in production. These tests
+// exercise TransferManager's queue internals, so pin the gate open.
+vi.mock('@/services/sync/cloudSyncProvider', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('@/services/sync/cloudSyncProvider')>();
+  return {
+    ...mod,
+    isReadestCloudStorageActive: () => true,
+  };
+});
+
 // After the module-level mock declarations, import the SUT
 import { transferManager } from '@/services/transferManager';
 import { eventDispatcher } from '@/utils/event';

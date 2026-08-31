@@ -14,7 +14,7 @@ interface ClipSignInRequest {
  * Confirm step for the login-wall clip fallback (#5262). Listens for the
  * sync event `clipPageWithSignInFallback` dispatches and asks the user
  * whether to open the page for a manual sign-in + capture. Mounted once
- * per page next to `useClipUrlIngress`.
+ * per page next to the URL-clip import flow.
  */
 const ClipSignInAlert: React.FC = () => {
   const _ = useTranslation();

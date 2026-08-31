@@ -1,11 +1,5 @@
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
-// ── Mocks for constants ──────────────────────────────────────────
-vi.mock('@/services/constants', () => ({
-  READEST_WEB_BASE_URL: 'https://web.readest.com',
-  READEST_NODE_BASE_URL: 'https://node.readest.com',
-}));
-
 // We need to reset modules between tests to pick up env var changes,
 // so we import dynamically in each test or test group.
 
@@ -129,10 +123,10 @@ describe('environment', () => {
       expect(getBaseUrl()).toBe('https://custom-api.example.com');
     });
 
-    test('falls back to READEST_WEB_BASE_URL when env var not set', async () => {
+    test('falls back to the app origin (no official default) when env var not set', async () => {
       delete env['NEXT_PUBLIC_API_BASE_URL'];
       const { getBaseUrl } = await import('@/services/environment');
-      expect(getBaseUrl()).toBe('https://web.readest.com');
+      expect(getBaseUrl()).toBe('');
     });
   });
 
@@ -144,10 +138,10 @@ describe('environment', () => {
       expect(getNodeBaseUrl()).toBe('https://custom-node.example.com');
     });
 
-    test('falls back to READEST_NODE_BASE_URL when env var not set', async () => {
+    test('falls back to empty when env var not set', async () => {
       delete env['NEXT_PUBLIC_NODE_BASE_URL'];
       const { getNodeBaseUrl } = await import('@/services/environment');
-      expect(getNodeBaseUrl()).toBe('https://node.readest.com');
+      expect(getNodeBaseUrl()).toBe('');
     });
   });
 
@@ -214,20 +208,20 @@ describe('environment', () => {
       expect(getAPIBaseUrl()).toBe('/api');
     });
 
-    test('returns full URL in production', async () => {
+    test('falls back to /api (no official default) in production', async () => {
       env['NODE_ENV'] = 'production';
       env['NEXT_PUBLIC_APP_PLATFORM'] = 'web';
       delete env['NEXT_PUBLIC_API_BASE_URL'];
       const { getAPIBaseUrl } = await import('@/services/environment');
-      expect(getAPIBaseUrl()).toBe('https://web.readest.com/api');
+      expect(getAPIBaseUrl()).toBe('/api');
     });
 
-    test('returns full URL for tauri platform even in development', async () => {
+    test('falls back to /api for tauri platform even in development', async () => {
       env['NODE_ENV'] = 'development';
       env['NEXT_PUBLIC_APP_PLATFORM'] = 'tauri';
       delete env['NEXT_PUBLIC_API_BASE_URL'];
       const { getAPIBaseUrl } = await import('@/services/environment');
-      expect(getAPIBaseUrl()).toBe('https://web.readest.com/api');
+      expect(getAPIBaseUrl()).toBe('/api');
     });
   });
 
@@ -240,20 +234,20 @@ describe('environment', () => {
       expect(getNodeAPIBaseUrl()).toBe('/api');
     });
 
-    test('returns full node URL in production', async () => {
+    test('falls back to /api (no official default) in production', async () => {
       env['NODE_ENV'] = 'production';
       env['NEXT_PUBLIC_APP_PLATFORM'] = 'web';
       delete env['NEXT_PUBLIC_NODE_BASE_URL'];
       const { getNodeAPIBaseUrl } = await import('@/services/environment');
-      expect(getNodeAPIBaseUrl()).toBe('https://node.readest.com/api');
+      expect(getNodeAPIBaseUrl()).toBe('/api');
     });
 
-    test('returns full node URL for tauri platform even in development', async () => {
+    test('falls back to /api for tauri platform even in development', async () => {
       env['NODE_ENV'] = 'development';
       env['NEXT_PUBLIC_APP_PLATFORM'] = 'tauri';
       delete env['NEXT_PUBLIC_NODE_BASE_URL'];
       const { getNodeAPIBaseUrl } = await import('@/services/environment');
-      expect(getNodeAPIBaseUrl()).toBe('https://node.readest.com/api');
+      expect(getNodeAPIBaseUrl()).toBe('/api');
     });
   });
 

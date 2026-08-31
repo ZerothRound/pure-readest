@@ -25,6 +25,26 @@ vi.mock('@/services/opds', () => ({
   syncSubscribedCatalogs: vi.fn(),
 }));
 
+// Readest Cloud and the native book channel are off in production (official
+// account removed); pin the gates open so the upload-queue flow stays
+// testable, and close the category gate in the "off" test below.
+const syncGates = vi.hoisted(() => ({
+  isSyncCategoryEnabled: vi.fn(() => true),
+  isReadestCloudStorageActive: vi.fn(() => true),
+}));
+
+vi.mock('@/services/sync/syncCategories', () => ({
+  isSyncCategoryEnabled: syncGates.isSyncCategoryEnabled,
+}));
+
+vi.mock('@/services/sync/cloudSyncProvider', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('@/services/sync/cloudSyncProvider')>();
+  return {
+    ...mod,
+    isReadestCloudStorageActive: syncGates.isReadestCloudStorageActive,
+  };
+});
+
 import { syncSubscribedCatalogs } from '@/services/opds';
 import { transferManager } from '@/services/transferManager';
 import { useLibraryStore } from '@/store/libraryStore';
@@ -64,6 +84,8 @@ const settle = async () => {
 };
 
 beforeEach(() => {
+  syncGates.isSyncCategoryEnabled.mockReturnValue(true);
+  syncGates.isReadestCloudStorageActive.mockReturnValue(true);
   useSettingsStore.setState({
     settings: { opdsCatalogs: [catalog] } as unknown as SystemSettings,
   });
@@ -161,6 +183,7 @@ describe('useOPDSSubscriptions', () => {
   test('does NOT queue a cloud upload when the Books sync category is off', async () => {
     vi.useFakeTimers();
     try {
+      syncGates.isSyncCategoryEnabled.mockReturnValue(false);
       currentUser = { id: 'user-1' };
       useSettingsStore.setState({
         settings: {

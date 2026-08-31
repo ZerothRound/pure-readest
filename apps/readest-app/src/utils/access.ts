@@ -1,117 +1,78 @@
-import { jwtDecode } from 'jwt-decode';
-import { supabase } from '@/utils/supabase';
 import { UserPlan } from '@/types/quota';
-import { DEFAULT_DAILY_TRANSLATION_QUOTA, DEFAULT_STORAGE_QUOTA } from '@/services/constants';
-import { isWebAppPlatform } from '@/services/environment';
 import { getDailyUsage } from '@/services/translators/utils';
-import { getRuntimeConfig } from '@/services/runtimeConfig';
 
-interface Token {
-  plan: UserPlan;
-  storage_usage_bytes: number;
-  storage_purchased_bytes: number;
-  [key: string]: string | number;
+/**
+ * Minimal account shape kept for API compatibility after official Readest
+ * login was removed (no Supabase session exists in this fork).
+ */
+export interface User {
+  id: string;
+  email?: string | null;
 }
 
-export const getSubscriptionPlan = (token: string): UserPlan => {
-  const data = jwtDecode<Token>(token) || {};
-  return data['plan'] || 'free';
+/**
+ * Official Readest account login is removed in this fork (pure-readest):
+ * there are no JWT claims to decode and no Supabase session, so every plan
+ * helper reports the top tier and quotas are effectively unlimited.
+ */
+export const getSubscriptionPlan = (_token: string): UserPlan => {
+  return 'pro';
 };
 
-export const getUserProfilePlan = (token: string): UserPlan => {
-  const data = jwtDecode<Token>(token) || {};
-  let plan = data['plan'] || 'free';
-  if (plan === 'free') {
-    const purchasedQuota = data['storage_purchased_bytes'] || 0;
-    if (purchasedQuota > 0) {
-      plan = 'purchase';
-    }
-  }
-  return plan;
+export const getUserProfilePlan = (_token: string): UserPlan => {
+  return 'pro';
 };
 
 export const STORAGE_QUOTA_GRACE_BYTES = 10 * 1024 * 1024; // 10 MB grace
 
-export const getStoragePlanData = (token: string) => {
-  const data = jwtDecode<Token>(token) || {};
-  const plan = data['plan'] || 'free';
-  const usage = data['storage_usage_bytes'] || 0;
-  const purchasedQuota = data['storage_purchased_bytes'] || 0;
-  const runtimeConfig = getRuntimeConfig();
-  const fixedQuota =
-    runtimeConfig?.storageFixedQuota ?? parseInt(process.env['STORAGE_FIXED_QUOTA'] ?? '0');
-  const planQuota = fixedQuota || DEFAULT_STORAGE_QUOTA[plan] || DEFAULT_STORAGE_QUOTA['free'];
-  const quota = planQuota + purchasedQuota;
-
+export const getStoragePlanData = (_token: string) => {
+  // Unlimited in this fork — storage is user-owned (WebDAV/Drive/S3/OneDrive)
+  // and Readest Cloud storage is disabled.
   return {
-    plan,
-    usage,
-    quota,
+    plan: 'pro',
+    usage: 0,
+    quota: Number.MAX_SAFE_INTEGER,
   };
 };
 
-export const getTranslationQuota = (plan: UserPlan): number => {
-  const runtimeConfig = getRuntimeConfig();
-  const fixedQuota =
-    runtimeConfig?.translationFixedQuota ?? parseInt(process.env['TRANSLATION_FIXED_QUOTA'] ?? '0');
-  return (
-    fixedQuota || DEFAULT_DAILY_TRANSLATION_QUOTA[plan] || DEFAULT_DAILY_TRANSLATION_QUOTA['free']
-  );
+export const getTranslationQuota = (_plan: UserPlan): number => {
+  // No daily translation cap in this fork.
+  return Number.MAX_SAFE_INTEGER;
 };
 
-export const getTranslationPlanData = (token: string) => {
-  const data = jwtDecode<Token>(token) || {};
-  const plan: UserPlan = data['plan'] || 'free';
+export const getTranslationPlanData = (_token: string) => {
   const usage = getDailyUsage() || 0;
-  const quota = getTranslationQuota(plan);
+  const quota = getTranslationQuota('pro');
 
   return {
-    plan,
+    plan: 'pro',
     usage,
     quota,
   };
 };
 
-export const getDailyTranslationPlanData = (token: string) => {
-  const data = jwtDecode<Token>(token) || {};
-  const plan = data['plan'] || 'free';
-  const quota = getTranslationQuota(plan);
+export const getDailyTranslationPlanData = (_token: string) => {
+  const quota = getTranslationQuota('pro');
 
   return {
-    plan,
+    plan: 'pro',
     quota,
   };
 };
 
 export const getAccessToken = async (): Promise<string | null> => {
-  // In browser context there might be two instances of supabase one in the app route
-  // and the other in the pages route, and they might have different sessions
-  // making the access token invalid for API calls. In that case we should use localStorage.
-  if (isWebAppPlatform()) {
-    return localStorage.getItem('token') ?? null;
-  }
-  const { data } = await supabase.auth.getSession();
-  return data?.session?.access_token ?? null;
+  // No official account in this fork, so there is never a bearer token.
+  return null;
 };
 
 export const getUserID = async (): Promise<string | null> => {
-  if (isWebAppPlatform()) {
-    const user = localStorage.getItem('user') ?? '{}';
-    return JSON.parse(user).id ?? null;
-  }
-  const { data } = await supabase.auth.getSession();
-  return data?.session?.user?.id ?? null;
+  return null;
 };
 
-export const validateUserAndToken = async (authHeader: string | null | undefined) => {
-  if (!authHeader) return {};
-
-  const token = authHeader.replace('Bearer ', '');
-  const {
-    data: { user },
-    error,
-  } = await supabase.auth.getUser(token);
-
-  if (error || !user) return {};
-  return { user, token };
+export const validateUserAndToken = async (
+  _authHeader: string | null | undefined,
+): Promise<{ user: User | null; token: string | null }> => {
+  // No Supabase in this fork: nothing can be validated, so callers treat the
+  // request as anonymous (routes that must run locally no longer gate on this).
+  return { user: null, token: null };
 };

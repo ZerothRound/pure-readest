@@ -110,17 +110,6 @@ export const navigateToReader = (
   }
 };
 
-export const navigateToLogin = (router: ReturnType<typeof useRouter>) => {
-  const pathname = window.location.pathname;
-  const search = window.location.search;
-  const currentPath = pathname !== '/auth' ? pathname + search : '/';
-  router.push(`/auth?redirect=${encodeURIComponent(currentPath)}`);
-};
-
-export const navigateToProfile = (router: ReturnType<typeof useRouter>) => {
-  router.push('/user');
-};
-
 export const navigateToLibrary = (
   router: ReturnType<typeof useRouter>,
   queryParams?: string,
@@ -161,16 +150,26 @@ export const redirectToLibrary = () => {
   redirect('/library');
 };
 
+/**
+ * Official Readest account navigation is removed in this fork (pure-readest):
+ * there is no sign-in, profile, or password-recovery flow, so every legacy
+ * account navigation helper simply bounces back to the library. Kept as
+ * redirects (instead of deleted) so any remaining caller never lands on a
+ * removed route.
+ */
+export const navigateToLogin = (router: ReturnType<typeof useRouter>) => {
+  router.push('/library');
+};
+
+export const navigateToProfile = (router: ReturnType<typeof useRouter>) => {
+  router.push('/library');
+};
+
 export const navigateToResetPassword = (router: ReturnType<typeof useRouter>) => {
-  const pathname = window.location.pathname;
-  const search = window.location.search;
-  const currentPath = pathname !== '/auth' ? pathname + search : '/';
-  router.push(`/auth/recovery?redirect=${encodeURIComponent(currentPath)}`);
+  router.push('/library');
 };
 
 export const navigateToUpdatePassword = (router: ReturnType<typeof useRouter>) => {
-  const pathname = window.location.pathname;
-  const search = window.location.search;
-  const currentPath = pathname !== '/auth' ? pathname + search : '/';
-  router.push(`/auth/update?redirect=${encodeURIComponent(currentPath)}`);
+  router.push('/library');
 };
+

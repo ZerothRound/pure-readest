@@ -108,12 +108,10 @@ async function withRequestLimit<T>(task: () => Promise<T>): Promise<T> {
   }
 }
 
-const requireWebToken = (token?: string | null) => {
-  if (!token) {
-    throw new Error('azure translate requires authentication in web builds');
-  }
-  return token;
-};
+// Official Readest login is removed in this fork: the web proxy no longer
+// validates a bearer token, so the client sends a placeholder and never throws
+// when no account token exists.
+const requireWebToken = (token?: string | null) => token ?? 'local';
 
 async function fetchAuthParams(token?: string | null): Promise<BingAuthParams> {
   if (isTauriAppPlatform()) {
@@ -228,7 +226,7 @@ export const azureProvider: TranslationProvider = {
   name: 'azure',
   label: _('Azure Translator'),
   get authRequired() {
-    return !isTauriAppPlatform();
+    return false;
   },
   // Verified against the live endpoint: `The <b>quick</b> brown fox …` comes
   // back as `那只<b>敏捷</b>的棕色狐狸 …`, with the tag on the matching word
@@ -241,8 +239,6 @@ export const azureProvider: TranslationProvider = {
     token?: string | null,
   ): Promise<string[]> => {
     if (!text.length) return [];
-    if (!isTauriAppPlatform()) requireWebToken(token);
-
     // Bing only accepts its own language list — bare subtags plus script
     // variants like zh-Hans — and answers `statusCode: 400` for maximized
     // culture codes such as en-US or de-DE (the retired api-edge endpoint

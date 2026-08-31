@@ -14,8 +14,7 @@ import { shouldOpenTransient } from '@/helpers/openWith';
  * event published by `useAppUrlIngress`, filters URLs that look like a file
  * (file://, content://, or plain path), and routes them to the library.
  *
- * Non-file URL shapes (https, readest://, data:, blob:) are skipped here
- * — other consumers (e.g. `useOpenAnnotationLink`) act on those.
+ * Non-file URL shapes (https, readest://, data:, blob:) are skipped here.
  *
  * Mount this hook alongside `useAppUrlIngress` so the ingress dispatcher is
  * actually running when URLs arrive.

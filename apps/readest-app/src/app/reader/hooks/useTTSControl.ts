@@ -368,7 +368,9 @@ export const useTTSControl = ({ bookKey, onRequestHidePanel }: UseTTSControlProp
     if (!ttsController || !bookKey) return;
     const handleNeedAuth = () => {
       eventDispatcher.dispatch('toast', {
-        message: _('Please log in to use advanced TTS features'),
+        message: _(
+          'Advanced TTS is unavailable without an official Readest account in this build',
+        ),
         type: 'error',
         timeout: 5000,
       });

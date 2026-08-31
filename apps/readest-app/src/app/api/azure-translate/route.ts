@@ -5,7 +5,6 @@ import {
   BING_TRANSLATOR_URL,
   parseBingAuthParams,
 } from '@/services/translators/providers/azureShared';
-import { validateUserAndToken } from '@/utils/access';
 
 /**
  * Same-origin proxy for the Bing Translator web API, used by the `azure`
@@ -29,11 +28,6 @@ const requestBudgets = new Map<string, { count: number; resetAt: number; active:
 const NULL_BODY_STATUSES = new Set([204, 205, 304]);
 
 export async function POST(request: NextRequest) {
-  const { user, token } = await validateUserAndToken(request.headers.get('authorization'));
-  if (!user || !token) {
-    return NextResponse.json({ error: 'Not authenticated' }, { status: 403 });
-  }
-
   const origin = request.headers.get('origin');
   let originHost: string | null = null;
   try {
@@ -51,14 +45,17 @@ export async function POST(request: NextRequest) {
   }
 
   const now = Date.now();
-  let budget = requestBudgets.get(user.id);
+  // Official login is removed in this fork; rate-limit per request identity
+  // (the caller's authorization header, or anonymous) instead of a JWT user.
+  const budgetKey = request.headers.get('authorization') ?? 'anonymous';
+  let budget = requestBudgets.get(budgetKey);
   if (!budget || budget.resetAt <= now) {
     budget = {
       count: 0,
       resetAt: now + RATE_LIMIT_WINDOW_MS,
       active: budget?.active ?? 0,
     };
-    requestBudgets.set(user.id, budget);
+    requestBudgets.set(budgetKey, budget);
   }
   if (budget.count >= RATE_LIMIT_REQUESTS || budget.active >= MAX_CONCURRENT_REQUESTS) {
     return NextResponse.json(

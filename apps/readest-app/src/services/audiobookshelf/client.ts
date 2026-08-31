@@ -48,9 +48,8 @@ const SUPPORTED_MIME_TYPES = [
  * so the server can tell devices apart in its session list. KOSyncClient and
  * BookOrbitClient instead read a `deviceId` already minted into settings for
  * those specific providers (see settingsService.ts); ABSServer carries no
- * such field, so this client keeps its own, persisted the same way
- * useInboxDrainer's device id is (a localStorage-backed UUID under a
- * dedicated key).
+ * such field, so this client keeps its own localStorage-backed UUID under a
+ * dedicated key.
  */
 const getDeviceId = (): string => {
   try {

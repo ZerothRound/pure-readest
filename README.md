@@ -3,7 +3,11 @@
 >
 > **本仓库（pure-readest）是由开源项目 [Readest](https://github.com/readest/readest)（AGPL-3.0）修改而来的分支。** 在保留上游功能的基础上进行了定制与修改，并持续跟踪上游更新；所有改动仍遵循上游的 [AGPL-3.0](./LICENSE) 许可协议。需要原版完整功能、官方安装包与文档，请访问 [readest/readest](https://github.com/readest/readest) 或 [readest.com](https://readest.com)。
 >
+> **本分支与官方版的差异：** 已移除官方 Readest 账号登录与 Readest Cloud 云同步（不会出现任何登录/注册界面，也不会向官方服务器上传数据）；WebDAV、Google Drive、S3、OneDrive、iCloud 等第三方同步，以及 DeepL 翻译等原付费/配额功能，均无需登录或订阅即可在本分支构建中使用。Google Drive / OneDrive 需要在构建时配置自有 OAuth 客户端 ID，DeepL 翻译需要配置 `DEEPL_FREE_API_KEYS`（或 `DEEPL_PRO_API_KEYS`）等自有 API Key；各第三方同步服务也仍需要其自身账号/凭据。
+>
 > **English:** This repository (`pure-readest`) is a **modified fork of the open-source project [Readest](https://github.com/readest/readest)** (AGPL-3.0). It customizes the upstream codebase while tracking upstream updates; all changes remain licensed under [AGPL-3.0](./LICENSE). For the original project, official downloads, and documentation, see [readest/readest](https://github.com/readest/readest) or [readest.com](https://readest.com).
+>
+> **Fork differences:** Official Readest account sign-in and Readest Cloud sync are removed (no login/registration UI and nothing is uploaded to the official servers); third-party sync providers (WebDAV, Google Drive, S3, OneDrive, iCloud) and features such as DeepL translation that are paid/quota-gated upstream work without any account or subscription in builds of this fork. Google Drive / OneDrive require your own OAuth client IDs configured at build time, DeepL requires your own API key (`DEEPL_FREE_API_KEYS` / `DEEPL_PRO_API_KEYS`), and each third-party service still needs its own account/credentials.
 
 ---
 

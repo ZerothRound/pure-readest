@@ -18,7 +18,7 @@ import { useTranslation } from './useTranslation';
 /**
  * Imports files downloaded inside the in-app web browser (#5775) and
  * mirrors the outcome into the browser's chrome. Mount once in the
- * library page, next to `useClipUrlIngress`.
+ * library page.
  */
 export function useWebBrowserDownloads() {
   const _ = useTranslation();

@@ -10,6 +10,22 @@ vi.mock('@/utils/event', () => ({
   },
 }));
 
+// Readest Cloud is removed in this fork, so `isReadestCloudStorageActive` is
+// always false in production. This suite exercises the transfer-queue gates,
+// so it pins the gate open for "Readest Cloud selected" scenarios and closes
+// it when a third-party provider is selected.
+const cloudGate = vi.hoisted(() => ({
+  isReadestCloudStorageActive: vi.fn(() => true),
+}));
+
+vi.mock('@/services/sync/cloudSyncProvider', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('@/services/sync/cloudSyncProvider')>();
+  return {
+    ...mod,
+    isReadestCloudStorageActive: cloudGate.isReadestCloudStorageActive,
+  };
+});
+
 import { transferManager } from '@/services/transferManager';
 import { eventDispatcher } from '@/utils/event';
 import type { Book } from '@/types/book';
@@ -75,6 +91,7 @@ const resetTransferStore = () => {
 };
 
 const settingsLoaded = (overrides: Partial<SystemSettings> = {}): void => {
+  cloudGate.isReadestCloudStorageActive.mockReturnValue(true);
   useSettingsStore.setState({
     settings: {
       version: 1,
@@ -89,8 +106,16 @@ const settingsNotLoaded = (): void => {
   useSettingsStore.setState({ settings: {} as SystemSettings });
 };
 
-const webdavSelected = (): void =>
-  settingsLoaded({ webdav: { enabled: true } } as Partial<SystemSettings>);
+const webdavSelected = (): void => {
+  cloudGate.isReadestCloudStorageActive.mockReturnValue(false);
+  useSettingsStore.setState({
+    settings: {
+      version: 1,
+      webdav: { enabled: true },
+      googleDrive: { enabled: false },
+    } as SystemSettings,
+  });
+};
 
 function makeAppService(overrides: Record<string, unknown> = {}) {
   return {

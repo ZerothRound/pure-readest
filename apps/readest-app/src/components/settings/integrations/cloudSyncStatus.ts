@@ -1,26 +1,5 @@
 import type { TranslationFunc } from '@/hooks/useTranslation';
 
-/**
- * Status-line derivation for the Cloud Sync chooser rows. Pure functions so
- * the full row-state matrix is unit-tested and every user-visible string is
- * enumerated here (one place for the /i18n extraction), never improvised at
- * the call site.
- */
-
-export interface ReadestRowInputs {
-  signedIn: boolean;
-  /** Plan still resolving from the JWT (signed-in only). */
-  planLoading: boolean;
-  /** Readest Cloud syncs the library on this device. */
-  enabled: boolean;
-}
-
-export const getReadestCloudRowStatus = (_: TranslationFunc, s: ReadestRowInputs): string => {
-  if (!s.signedIn) return _('Not signed in');
-  if (s.planLoading) return '…';
-  return s.enabled ? _('Active') : _('Off');
-};
-
 export interface ThirdPartyRowInputs {
   enabled: boolean;
   configured: boolean;

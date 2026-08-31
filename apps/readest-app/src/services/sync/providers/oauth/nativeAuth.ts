@@ -5,9 +5,8 @@ import { type as osType } from '@tauri-apps/plugin-os';
 export interface AuthRequest {
   authUrl: string;
   /**
-   * iOS `ASWebAuthenticationSession` callback scheme. Defaults to `readest`
-   * natively (the Supabase login); the Google Drive flow passes its reverse-DNS
-   * scheme so the session intercepts that redirect instead.
+   * iOS `ASWebAuthenticationSession` callback scheme. The Google Drive flow
+   * passes its reverse-DNS scheme so the session intercepts that redirect.
    */
   callbackScheme?: string;
 }

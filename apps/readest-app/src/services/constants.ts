@@ -486,10 +486,6 @@ export const DEFAULT_NOTE_EXPORT_CONFIG: NoteExportConfig = {
   includePageNumber: true,
   includeTimestamp: false,
   includeChapterSeparator: false,
-  // Default to the app deeplink in the native app and the universal web link on
-  // the web. Inlined platform check avoids a circular import with
-  // environment.ts, which imports from this module.
-  linkType: process.env['NEXT_PUBLIC_APP_PLATFORM'] === 'tauri' ? 'app' : 'web',
   noteSeparator: '\n\n',
   useCustomTemplate: false,
   customTemplate: '',
@@ -882,55 +878,11 @@ export const CJK_FONTS_PATTENS = new RegExp(
 
 export const BOOK_IDS_SEPARATOR = '+';
 
-export const DOWNLOAD_READEST_URL = 'https://readest.com?utm_source=readest_web';
-
-export const READEST_WEB_BASE_URL = 'https://web.readest.com';
-export const READEST_NODE_BASE_URL = 'https://node.readest.com';
-
-export const SHARE_BASE_URL = `${READEST_WEB_BASE_URL}/s`;
-export const SHARE_EXPIRATION_DAYS = [1, 3, 7] as const;
-
-// Send to Readest browser-extension capture: R2 bucket and limits for
-// undrained inbox items (defense against a leaked access token).
-export const SEND_INBOX_BUCKET = 'readest-send-inbox';
-export const SEND_INBOX_PENDING_LIMIT = 50;
-// Hard cap on the size of a single uploaded EPUB the browser extension can
-// drop into the inbox. 30 MB is the same total-asset cap the client-side
-// bundler enforces — plus a bit of head-room for chapter HTML / structural
-// overhead. Beyond this size a clipped article is almost certainly an
-// over-illustrated page that would never read well in the EPUB anyway.
-export const SEND_INBOX_FILE_MAX_BYTES = 40 * 1024 * 1024;
-export const SHARE_DEFAULT_EXPIRATION_DAYS = 3;
-export const SHARE_MAX_PER_USER = 50;
-export const SHARE_TOKEN_LENGTH = 22;
-export const SHARE_PRESIGN_TTL_SECONDS = 300;
-export const SHARE_CFI_MAX_LENGTH = 512;
-
-const LATEST_DOWNLOAD_BASE_URL = 'https://download.readest.com/releases';
-
-export const READEST_UPDATER_FILE = `${LATEST_DOWNLOAD_BASE_URL}/latest.json`;
-
-export const READEST_CHANGELOG_FILE = `${LATEST_DOWNLOAD_BASE_URL}/release-notes.json`;
-
-export const READEST_NIGHTLY_UPDATER_FILE = 'https://download.readest.com/nightly/latest.json';
-
-// Public (verification) key, identical to src-tauri/tauri.conf.json `updater.pubkey`.
-// Used to verify nightly artifacts in the custom install flows (portable /
-// AppImage / Android). Safe to embed — it is a public key.
-export const READEST_UPDATER_PUBKEY =
-  'dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEJFMEQ1QjE2OEU1NEIzNTEKUldSUnMxU09GbHNOdmpEaWFMT1crRFpEV2VORzQ2MklxaFc0M1R0ci9xY2c1bENXS0xhM1R1L2sK';
-
-export const READEST_PUBLIC_STORAGE_BASE_URL = 'https://storage.readest.com';
-// Custom domain serving the readest-public bucket; durable media assets
-// (e.g. published book covers) are linked through this host.
-export const READEST_PUBLIC_ASSETS_BASE_URL = 'https://assets.readest.com';
-
 export const READEST_OPDS_USER_AGENT = 'Readest/1.0 (OPDS Browser)';
 
 export const SYNC_PROGRESS_INTERVAL_SEC = 3;
 export const SYNC_NOTES_INTERVAL_SEC = 5;
 export const SYNC_BOOKS_INTERVAL_SEC = 5;
-export const CHECK_UPDATE_INTERVAL_SEC = 24 * 60 * 60;
 
 export const MAX_ZOOM_LEVEL = 500;
 export const MIN_ZOOM_LEVEL = 50;
