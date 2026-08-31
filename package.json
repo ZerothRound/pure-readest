@@ -1,5 +1,6 @@
 {
   "name": "@readest/monorepo",
+  "description": "Unofficial fork of Readest (pure-readest): Windows desktop builds without official account / Readest Cloud.",
   "private": true,
   "repository": "ZerothRound/pure-readest",
   "scripts": {
