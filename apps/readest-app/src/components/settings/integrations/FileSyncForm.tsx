@@ -218,7 +218,8 @@ const FileSyncForm: React.FC<FileSyncFormProps> = ({
   };
 
   return (
-    <BoxedList>
+    <>
+      <BoxedList>
       <SettingsSwitchRow
         label={_('Upload Book Files')}
         description={_('Uploads book files to your other devices')}
@@ -278,34 +279,35 @@ const FileSyncForm: React.FC<FileSyncFormProps> = ({
           {_('Sync now')}
         </button>
       </SettingsRow>
-    </BoxedList>
-    {diagnostics.length > 0 && (
-      <BoxedList>
-        <SettingsRow
-          label={_('Sync Diagnostics')}
-          description={_('Last {{count}} sync request(s)', { count: diagnostics.length })}
-        >
-          <button
-            type='button'
-            onClick={() => void handleCopyDiagnostics()}
-            className='btn btn-ghost btn-sm h-8 min-h-8 gap-1 px-2'
-            title={_('Copy diagnostics')}
-            aria-label={_('Copy diagnostics')}
-          >
-            <MdContentCopy className='h-4 w-4' />
-            {_('Copy')}
-          </button>
-        </SettingsRow>
-        <details className='px-4 pb-3'>
-          <summary className='text-base-content/70 cursor-pointer text-sm'>
-            {_('Show details')}
-          </summary>
-          <pre className='bg-base-200 mt-2 max-h-64 overflow-auto rounded-md p-2 text-xs whitespace-pre-wrap'>
-            {formatSyncDiagnostics(diagnostics, { backend: kind })}
-          </pre>
-        </details>
       </BoxedList>
-    )}
+      {diagnostics.length > 0 && (
+        <BoxedList>
+          <SettingsRow
+            label={_('Sync Diagnostics')}
+            description={_('Last {{count}} sync request(s)', { count: diagnostics.length })}
+          >
+            <button
+              type='button'
+              onClick={() => void handleCopyDiagnostics()}
+              className='btn btn-ghost btn-sm h-8 min-h-8 gap-1 px-2'
+              title={_('Copy diagnostics')}
+              aria-label={_('Copy diagnostics')}
+            >
+              <MdContentCopy className='h-4 w-4' />
+              {_('Copy')}
+            </button>
+          </SettingsRow>
+          <details className='px-4 pb-3'>
+            <summary className='text-base-content/70 cursor-pointer text-sm'>
+              {_('Show details')}
+            </summary>
+            <pre className='bg-base-200 mt-2 max-h-64 overflow-auto rounded-md p-2 text-xs whitespace-pre-wrap'>
+              {formatSyncDiagnostics(diagnostics, { backend: kind })}
+            </pre>
+          </details>
+        </BoxedList>
+      )}
+    </>
   );
 };
 
