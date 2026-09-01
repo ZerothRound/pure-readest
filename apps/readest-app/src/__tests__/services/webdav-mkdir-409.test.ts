@@ -1,4 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+import {
+  clearSyncDiagnostics,
+  getSyncDiagnostics,
+} from '@/services/sync/diagnostics';
 import { mkdir, WebDAVRequestError, type WebDAVConfig } from '@/services/sync/providers/webdav/client';
 
 /**
@@ -24,10 +28,12 @@ let fetchMock: ReturnType<typeof vi.fn>;
 beforeEach(() => {
   fetchMock = vi.fn();
   globalThis.fetch = fetchMock as unknown as typeof fetch;
+  clearSyncDiagnostics();
 });
 
 afterEach(() => {
   globalThis.fetch = ORIGINAL_FETCH;
+  clearSyncDiagnostics();
   vi.restoreAllMocks();
 });
 
@@ -90,6 +96,31 @@ describe('mkdir 409 handling', () => {
     await expect(mkdir(config, '/Readest')).resolves.toBeUndefined();
     await expect(mkdir(config, '/Readest/books')).resolves.toBeUndefined();
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  test('records the PROPFIND probe verdict for every 409 outcome', async () => {
+    // exists
+    fetchMock
+      .mockResolvedValueOnce(new Response(null, { status: 409 }))
+      .mockResolvedValueOnce(new Response(null, { status: 207 }));
+    await mkdir(config, '/Readest');
+
+    // missing
+    fetchMock
+      .mockResolvedValueOnce(new Response(null, { status: 409 }))
+      .mockResolvedValueOnce(new Response(null, { status: 404 }));
+    await expect(mkdir(config, '/Readest/books')).rejects.toMatchObject({ status: 409 });
+
+    // inconclusive
+    fetchMock
+      .mockResolvedValueOnce(new Response(null, { status: 409 }))
+      .mockResolvedValueOnce(new Response(null, { status: 401 }));
+    await mkdir(config, '/Readest/books/hash');
+
+    const verdicts = getSyncDiagnostics()
+      .filter((e) => e.op === 'mkdir-409')
+      .map((e) => e.detail);
+    expect(verdicts).toEqual(['exists', 'missing', 'inconclusive']);
   });
 
   test('surfaces non-conflict MKCOL failures with their status', async () => {

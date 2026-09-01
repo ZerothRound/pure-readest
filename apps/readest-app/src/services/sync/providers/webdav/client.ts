@@ -1,5 +1,9 @@
 import { fetch as tauriFetch } from '@tauri-apps/plugin-http';
 import { isTauriAppPlatform } from '@/services/environment';
+import {
+  formatWebDAVRequestPath,
+  recordSyncDiagnostic,
+} from '@/services/sync/diagnostics';
 
 /**
  * Minimal WebDAV client used by the Integrations panel.
@@ -453,20 +457,57 @@ const requestWithMethod = async (
   init: { headers?: Record<string, string>; body?: BodyInit | null } = {},
 ): Promise<Response> => {
   const url = buildUrl(config.serverUrl, path);
+  const startedAt = Date.now();
+  const redactedPath = formatWebDAVRequestPath(config.serverUrl, path);
+  const recordRequest = (status?: number, error?: string) => {
+    recordSyncDiagnostic({
+      ts: Date.now(),
+      backend: 'webdav',
+      op: method,
+      method,
+      path: redactedPath,
+      status,
+      durationMs: Date.now() - startedAt,
+      error,
+    });
+  };
   const fetchFn = getFetch();
   const headers: Record<string, string> = {
     Authorization: buildAuthHeader(config.username, config.password),
     ...(init.headers || {}),
   };
   try {
-    return await fetchWithTimeout(
+    const response = await fetchWithTimeout(
       fetchFn,
       url,
       { method, headers, body: init.body ?? null },
       timeoutForMethod(method),
     );
+    recordRequest(response.status);
+    if (response.status >= 400) {
+      // Clone so the caller can still read the body; only keep a short
+      // snippet so credentials/XML noise never bloat the diagnostics.
+      void response
+        .clone()
+        .text()
+        .then((body) => {
+          recordSyncDiagnostic({
+            ts: Date.now(),
+            backend: 'webdav',
+            op: `${method}-response`,
+            method,
+            path: redactedPath,
+            status: response.status,
+            responseSnippet: body.slice(0, 300),
+          });
+        })
+        .catch(() => {});
+    }
+    return response;
   } catch (e) {
-    throw new WebDAVRequestError((e as Error).message || 'Network error', undefined, 'NETWORK');
+    const message = (e as Error).message || 'Network error';
+    recordRequest(undefined, message);
+    throw new WebDAVRequestError(message, undefined, 'NETWORK');
   }
 };
 
@@ -635,10 +676,39 @@ export const mkdir = async (config: WebDAVConfig, path: string): Promise<void> =
     // treating an "already exists" 409 as failure would poison every repeat
     // sync on servers with unreliable PROPFIND.
     const exists = await probeExists(config, path);
-    if (exists) return;
+    if (exists) {
+      recordSyncDiagnostic({
+        ts: Date.now(),
+        backend: 'webdav',
+        op: 'mkdir-409',
+        method: 'MKCOL',
+        path,
+        status: 409,
+        detail: 'exists',
+      });
+      return;
+    }
     if (exists === false) {
+      recordSyncDiagnostic({
+        ts: Date.now(),
+        backend: 'webdav',
+        op: 'mkdir-409',
+        method: 'MKCOL',
+        path,
+        status: 409,
+        detail: 'missing',
+      });
       throw new WebDAVRequestError('Parent directory missing', 409);
     }
+    recordSyncDiagnostic({
+      ts: Date.now(),
+      backend: 'webdav',
+      op: 'mkdir-409',
+      method: 'MKCOL',
+      path,
+      status: 409,
+      detail: 'inconclusive',
+    });
     return;
   }
   throw new WebDAVRequestError(`MKCOL failed with status ${response.status}`, response.status);

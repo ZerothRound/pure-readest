@@ -4,7 +4,11 @@ import type { EnvConfigType } from '@/services/environment';
 import type { ProgressHandler } from '@/utils/transfer';
 import type { TranslationFunc } from '@/hooks/useTranslation';
 import type { SystemSettings } from '@/types/settings';
-import type { FileEntry, FileSyncProvider } from '@/services/sync/file/provider';
+import {
+  FileSyncError,
+  type FileEntry,
+  type FileSyncProvider,
+} from '@/services/sync/file/provider';
 import { useSettingsStore } from '@/store/settingsStore';
 import { useLibraryStore } from '@/store/libraryStore';
 import { useFileSyncStore } from '@/store/fileSyncStore';
@@ -326,7 +330,14 @@ export const runFileLibrarySyncPass = async (
             : result;
         }
       } catch (e) {
-        const message = e instanceof Error ? e.message : String(e);
+        const message =
+          e instanceof FileSyncError
+            ? [e.code, e.status !== undefined ? `HTTP ${e.status}` : undefined, e.message]
+                .filter(Boolean)
+                .join(' · ')
+            : e instanceof Error
+              ? e.message
+              : String(e);
         useFileSyncStore.getState().setLastError(kind, message);
         console.warn('[cloudSync] library file sync failed', kind, e);
       }

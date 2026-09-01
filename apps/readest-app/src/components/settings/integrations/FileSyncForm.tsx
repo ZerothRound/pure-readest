@@ -1,14 +1,17 @@
 import clsx from 'clsx';
 import dayjs from 'dayjs';
 import React from 'react';
-import { MdCloudSync } from 'react-icons/md';
+import { MdCloudSync, MdContentCopy } from 'react-icons/md';
 import { v4 as uuidv4 } from 'uuid';
 import { useEnv } from '@/context/EnvContext';
 import { useTranslation, type TranslationFunc } from '@/hooks/useTranslation';
 import { useSettingsStore } from '@/store/settingsStore';
 import { useLibraryStore } from '@/store/libraryStore';
 import { useFileSyncStore } from '@/store/fileSyncStore';
-import { eventDispatcher } from '@/utils/event';
+import {
+  formatSyncDiagnostics,
+  useSyncDiagnostics,
+} from '@/services/sync/diagnostics';
 import { FileSyncEngine } from '@/services/sync/file/engine';
 import { FileSyncError } from '@/services/sync/file/provider';
 import { createAppLocalStore } from '@/services/sync/file/appLocalStore';
@@ -17,6 +20,7 @@ import {
   type FileSyncBackendKind,
 } from '@/services/sync/file/providerRegistry';
 import type { KOSyncStrategy } from '@/types/settings';
+import { eventDispatcher } from '@/utils/event';
 import { BoxedList, SettingsRow, SettingsSelect, SettingsSwitchRow } from '../primitives';
 
 /** The settings fields the shared sync controls read/write (WebDAV + Drive share these). */
@@ -60,7 +64,13 @@ const formatSyncError = (_: TranslationFunc, e: unknown): string => {
         return _('Network error');
     }
     if (typeof e.status === 'number') {
-      return _('Sync failed (status {{status}})', { status: e.status });
+      const detail = e.message?.trim() ? e.message : undefined;
+      return detail
+        ? _('Sync failed (status {{status}}): {{detail}}', {
+            status: e.status,
+            detail,
+          })
+        : _('Sync failed (status {{status}})', { status: e.status });
     }
   }
   return _('Sync failed.');
@@ -87,15 +97,33 @@ const FileSyncForm: React.FC<FileSyncFormProps> = ({
   const isSyncing = useFileSyncStore((s) => s.byKind[kind]?.isSyncing ?? false);
   const syncProgressLabel = useFileSyncStore((s) => s.byKind[kind]?.progressLabel ?? null);
   const syncProgressDetail = useFileSyncStore((s) => s.byKind[kind]?.progressDetail ?? null);
+  const lastError = useFileSyncStore((s) => s.lastErrorByKind[kind]);
   const beginSync = useFileSyncStore((s) => s.beginSync);
   const updateProgress = useFileSyncStore((s) => s.updateProgress);
   const endSync = useFileSyncStore((s) => s.endSync);
   const setLastError = useFileSyncStore((s) => s.setLastError);
+  const diagnostics = useSyncDiagnostics();
 
   const handleToggleSyncBooks = () => persist({ syncBooks: !(stored.syncBooks ?? false) });
   const handleToggleFullSync = () => persist({ fullSync: !(stored.fullSync ?? false) });
   const handleStrategyChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
     await persist({ strategy: e.target.value as KOSyncStrategy });
+  };
+
+  const handleCopyDiagnostics = async () => {
+    const text = formatSyncDiagnostics(diagnostics, { backend: kind });
+    try {
+      await navigator.clipboard.writeText(text);
+      eventDispatcher.dispatch('toast', {
+        message: _('Diagnostics copied'),
+        type: 'info',
+      });
+    } catch {
+      eventDispatcher.dispatch('toast', {
+        message: _('Failed to copy diagnostics'),
+        type: 'error',
+      });
+    }
   };
 
   /**
@@ -219,9 +247,11 @@ const FileSyncForm: React.FC<FileSyncFormProps> = ({
         label={
           syncProgressLabel
             ? syncProgressLabel
-            : stored.lastSyncedAt
-              ? _('Synced {{time}}', { time: dayjs(stored.lastSyncedAt).fromNow() })
-              : _('Never synced')
+            : lastError
+              ? _('Sync failed: {{error}}', { error: lastError })
+              : stored.lastSyncedAt
+                ? _('Synced {{time}}', { time: dayjs(stored.lastSyncedAt).fromNow() })
+                : _('Never synced')
         }
         description={
           syncProgressDetail ? (
@@ -249,6 +279,33 @@ const FileSyncForm: React.FC<FileSyncFormProps> = ({
         </button>
       </SettingsRow>
     </BoxedList>
+    {diagnostics.length > 0 && (
+      <BoxedList>
+        <SettingsRow
+          label={_('Sync Diagnostics')}
+          description={_('Last {{count}} sync request(s)', { count: diagnostics.length })}
+        >
+          <button
+            type='button'
+            onClick={() => void handleCopyDiagnostics()}
+            className='btn btn-ghost btn-sm h-8 min-h-8 gap-1 px-2'
+            title={_('Copy diagnostics')}
+            aria-label={_('Copy diagnostics')}
+          >
+            <MdContentCopy className='h-4 w-4' />
+            {_('Copy')}
+          </button>
+        </SettingsRow>
+        <details className='px-4 pb-3'>
+          <summary className='text-base-content/70 cursor-pointer text-sm'>
+            {_('Show details')}
+          </summary>
+          <pre className='bg-base-200 mt-2 max-h-64 overflow-auto rounded-md p-2 text-xs whitespace-pre-wrap'>
+            {formatSyncDiagnostics(diagnostics, { backend: kind })}
+          </pre>
+        </details>
+      </BoxedList>
+    )}
   );
 };
 

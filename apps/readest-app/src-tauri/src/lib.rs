@@ -725,10 +725,13 @@ pub fn run() {
 
             #[cfg(not(target_os = "macos"))]
             {
-                win_builder.build().unwrap();
+                let win = win_builder.build().unwrap();
+                // Debug builds (CI debug artifact / local `tauri build --debug
+                // --features devtools`) open DevTools on startup so sync
+                // request logs are immediately visible without a shortcut.
+                #[cfg(all(debug_assertions, feature = "devtools"))]
+                let _ = win.open_devtools();
             }
-            // let win = win_builder.build().unwrap();
-            // win.open_devtools();
 
             #[cfg(target_os = "macos")]
             {

@@ -55,6 +55,57 @@ jobs:
           path: target/release/bundle/**
           if-no-files-found: error
 
+  desktop-build-debug:
+    name: Desktop debug build (windows, devtools)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.1.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Setup vendors (pdfjs / simplecc / jieba)
+        working-directory: apps/readest-app
+        run: pnpm setup-vendors
+
+      - name: Get version
+        id: version
+        working-directory: apps/readest-app
+        run: echo "app_version=$(node -p "require('./package.json').version")" >> "$env:GITHUB_OUTPUT"
+
+      - name: Build debug app (Tauri, devtools)
+        run: pnpm tauri build --debug --features devtools --no-bundle
+
+      - name: Package debug exe
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.app_version }}"
+          Compress-Archive -Path target/debug/pure-readest.exe -DestinationPath "pure-readest-$version-debug-windows-x64.zip" -Force
+
+      - name: Upload debug artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: readest-windows-debug
+          path: pure-readest-*.zip
+          if-no-files-found: error
+
   release:
     name: Create GitHub Release
     needs: desktop-build

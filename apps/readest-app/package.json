@@ -1,6 +1,6 @@
 {
   "name": "@readest/readest-app",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "description": "Unofficial Windows-focused fork of Readest with official account and Readest Cloud sync removed.",
   "private": true,
   "type": "module",

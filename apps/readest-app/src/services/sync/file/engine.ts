@@ -1,3 +1,4 @@
+import { recordSyncDiagnostic } from '@/services/sync/diagnostics';
 import { Book, BookConfig, BookNote } from '@/types/book';
 import type { ProgressHandler } from '@/utils/transfer';
 import { isAudiobook } from '@/utils/audiobook';
@@ -318,6 +319,14 @@ export class FileSyncEngine {
       await this.provider.writeText(path, body);
     } catch (e) {
       if (e instanceof FileSyncError && e.status === 409) {
+        recordSyncDiagnostic({
+          ts: Date.now(),
+          backend: 'file-sync',
+          op: 'write-409-retry',
+          method: 'PUT',
+          path,
+          status: 409,
+        });
         await this.ensureDirs(dirs);
         await this.provider.writeText(path, body);
         return;
@@ -394,6 +403,14 @@ export class FileSyncEngine {
       await this.provider.writeBinary(path, local.bytes);
     } catch (e) {
       if (e instanceof FileSyncError && e.status === 409) {
+        recordSyncDiagnostic({
+          ts: Date.now(),
+          backend: 'file-sync',
+          op: 'write-409-retry',
+          method: 'PUT',
+          path,
+          status: 409,
+        });
         await this.ensureDirs(dirs);
         await this.provider.writeBinary(path, local.bytes);
       } else {
@@ -430,6 +447,14 @@ export class FileSyncEngine {
       await this.provider.writeBinary(path, local.bytes, 'image/png');
     } catch (e) {
       if (e instanceof FileSyncError && e.status === 409) {
+        recordSyncDiagnostic({
+          ts: Date.now(),
+          backend: 'file-sync',
+          op: 'write-409-retry',
+          method: 'PUT',
+          path,
+          status: 409,
+        });
         await this.ensureDirs(dirs);
         await this.provider.writeBinary(path, local.bytes, 'image/png');
       } else {
@@ -510,6 +535,14 @@ export class FileSyncEngine {
       // MKCOL and PUT (or a server that answers 409 for an existing
       // collection) is healed by one re-ensure + retry.
       if (e instanceof FileSyncError && e.status === 409) {
+        recordSyncDiagnostic({
+          ts: Date.now(),
+          backend: 'file-sync',
+          op: 'write-409-retry',
+          method: 'PUT',
+          path,
+          status: 409,
+        });
         await this.ensureDirs(dirs);
         await this.provider.writeText(path, JSON.stringify(index));
         return;
