@@ -405,7 +405,6 @@ export const useKOSync = (bookKey: string, provider: KosyncProgressProvider = ko
     eventDispatcher.on('push-kosync', handlePushProgress);
     eventDispatcher.on('flush-kosync', handleFlush);
     return () => {
-      const { pushProgress } = syncRefs.current;
       eventDispatcher.off('push-kosync', handlePushProgress);
       eventDispatcher.off('flush-kosync', handleFlush);
     };

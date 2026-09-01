@@ -25,7 +25,6 @@ export const useBookOrbitNotesSync = (bookKey: string) => {
   const { getConfig, setConfig, getBookData } = useBookDataStore();
   const { getView } = useReaderStore();
 
-  const config = getConfig(bookKey);
   const passRunning = useRef(false);
   const unmatchedHinted = useRef(false);
   const storeRef = useRef<BookOrbitSyncStore | null>(null);

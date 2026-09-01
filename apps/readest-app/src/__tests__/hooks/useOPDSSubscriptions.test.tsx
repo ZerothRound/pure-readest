@@ -77,13 +77,6 @@ const catalog = {
   autoDownload: true,
 } as OPDSCatalog;
 
-const settle = async () => {
-  await act(async () => {
-    await Promise.resolve();
-    await Promise.resolve();
-  });
-};
-
 /** Manual re-check request, as pull-to-refresh / the catalog toggle sends. */
 const check = async () => {
   await act(async () => {
