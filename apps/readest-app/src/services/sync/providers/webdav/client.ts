@@ -329,6 +329,9 @@ export const checkConnection = async (
     if (response.status === 404) {
       return { success: false, status: response.status, code: 'ROOT_NOT_FOUND' };
     }
+    if (response.status === 409 && (await isAncestorsNotFound409(response))) {
+      return { success: false, status: 404, code: 'ROOT_NOT_FOUND' };
+    }
     return { success: false, status: response.status, code: 'UNEXPECTED_STATUS' };
   } catch (e) {
     // Keep the raw exception message in `message` for the dev console;
@@ -376,6 +379,9 @@ export const listDirectory = async (
   }
   if (response.status === 401 || response.status === 403) {
     throw new WebDAVRequestError('Authentication failed', response.status, 'AUTH_FAILED');
+  }
+  if (response.status === 409 && (await isAncestorsNotFound409(response))) {
+    throw new WebDAVRequestError('Directory not found', 404, 'NOT_FOUND');
   }
   if (response.status === 404) {
     throw new WebDAVRequestError('Directory not found', response.status, 'NOT_FOUND');
@@ -512,6 +518,25 @@ const requestWithMethod = async (
 };
 
 /**
+ * Jianguoyun (坚果云) answers 409 with an `AncestorsNotFound` body when the
+ * target's parent directory does not exist yet — where standard WebDAV
+ * servers answer 404. Treat that as "the remote resource does not exist" so
+ * a first sync can create the tree instead of aborting with a 409.
+ */
+const isAncestorsNotFound409 = async (response: Response): Promise<boolean> => {
+  if (response.status !== 409) return false;
+  try {
+    const body = await response.text();
+    return (
+      /AncestorsNotFound/i.test(body) ||
+      /ancestors of this location does not found/i.test(body)
+    );
+  } catch {
+    return false;
+  }
+};
+
+/**
  * GET a file's content. Returns `null` when the server replies 404, so the
  * caller can treat "first push" as a non-error code path. Any other
  * non-2xx surfaces as a `WebDAVRequestError` with the status attached.
@@ -519,6 +544,7 @@ const requestWithMethod = async (
 export const getFile = async (config: WebDAVConfig, path: string): Promise<string | null> => {
   const response = await requestWithMethod(config, path, 'GET');
   if (response.status === 404) return null;
+  if (response.status === 409 && (await isAncestorsNotFound409(response))) return null;
   if (response.status === 401 || response.status === 403) {
     throw new WebDAVRequestError('Authentication failed', response.status, 'AUTH_FAILED');
   }
@@ -537,6 +563,7 @@ export const getFileBinary = async (
 ): Promise<ArrayBuffer | null> => {
   const response = await requestWithMethod(config, path, 'GET');
   if (response.status === 404) return null;
+  if (response.status === 409 && (await isAncestorsNotFound409(response))) return null;
   if (response.status === 401 || response.status === 403) {
     throw new WebDAVRequestError('Authentication failed', response.status, 'AUTH_FAILED');
   }
@@ -615,6 +642,7 @@ export const headFile = async (
 ): Promise<{ size?: number; etag?: string } | null> => {
   const response = await requestWithMethod(config, path, 'HEAD');
   if (response.status === 404) return null;
+  if (response.status === 409 && (await isAncestorsNotFound409(response))) return null;
   if (response.status === 401 || response.status === 403) {
     throw new WebDAVRequestError('Authentication failed', response.status, 'AUTH_FAILED');
   }
@@ -642,6 +670,7 @@ const probeExists = async (config: WebDAVConfig, path: string): Promise<boolean 
     });
     if (response.status === 207 || response.status === 200) return true;
     if (response.status === 404) return false;
+    if (response.status === 409 && (await isAncestorsNotFound409(response))) return false;
     return undefined;
   } catch {
     return undefined;
@@ -731,6 +760,7 @@ export const ensureDirectory = async (config: WebDAVConfig, ancestors: string[])
 export const exists = async (config: WebDAVConfig, path: string): Promise<boolean> => {
   const response = await requestWithMethod(config, path, 'HEAD');
   if (response.status === 404) return false;
+  if (response.status === 409 && (await isAncestorsNotFound409(response))) return false;
   if (response.status >= 200 && response.status < 300) return true;
   if (response.status === 401 || response.status === 403) {
     throw new WebDAVRequestError('Authentication failed', response.status, 'AUTH_FAILED');
