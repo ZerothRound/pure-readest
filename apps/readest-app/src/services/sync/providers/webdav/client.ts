@@ -610,7 +610,11 @@ const probeExists = async (config: WebDAVConfig, path: string): Promise<boolean 
 /**
  * MKCOL on a single path. 405 is the standard "directory already exists"
  * response on most WebDAV servers — we fold that into success so callers
- * can call this idempotently without first probing existence.
+ * can call this idempotently without first probing existence. Some servers
+ * (e.g. Jianguoyun/坚果云) answer 409 for "already exists" instead; a
+ * PROPFIND probe tells that apart from a genuinely missing parent, and an
+ * inconclusive probe is treated as success so a repeat sync of an existing
+ * tree cannot wedge on 409 forever.
  */
 export const mkdir = async (config: WebDAVConfig, path: string): Promise<void> => {
   const response = await requestWithMethod(config, path, 'MKCOL');
@@ -624,10 +628,18 @@ export const mkdir = async (config: WebDAVConfig, path: string): Promise<void> =
     // collection already exists instead of the standard 405. Probe with
     // PROPFIND to tell the two apart: an existing target is idempotent
     // success; a missing target keeps the not-found-style error so the
-    // caller can re-run ensureDirectory.
+    // caller can re-run ensureDirectory. An inconclusive probe (auth blip,
+    // non-standard response, network failure) is treated as success: if the
+    // parent really is missing the subsequent write fails with 409/404 and
+    // the engine's one-shot re-ensure retry still surfaces it, while
+    // treating an "already exists" 409 as failure would poison every repeat
+    // sync on servers with unreliable PROPFIND.
     const exists = await probeExists(config, path);
     if (exists) return;
-    throw new WebDAVRequestError('Parent directory missing', 409);
+    if (exists === false) {
+      throw new WebDAVRequestError('Parent directory missing', 409);
+    }
+    return;
   }
   throw new WebDAVRequestError(`MKCOL failed with status ${response.status}`, response.status);
 };

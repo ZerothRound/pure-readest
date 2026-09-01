@@ -3,7 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { useEnv } from '@/context/EnvContext';
 import { useBookDataStore } from '@/store/bookDataStore';
 import { useReaderStore } from '@/store/readerStore';
-import { getBookProgress, useBookProgress } from '@/store/readerProgressStore';
+import { getBookProgress } from '@/store/readerProgressStore';
 import { useSettingsStore } from '@/store/settingsStore';
 import { useTranslation } from '@/hooks/useTranslation';
 import { debounce } from '@/utils/debounce';
@@ -22,7 +22,6 @@ import {
   settingsKeyForBackend,
 } from '@/services/sync/cloudSyncProvider';
 import { removeBookNoteOverlays } from '../utils/annotatorUtil';
-import { useWindowActiveChanged } from './useWindowActiveChanged';
 import { syncLegadoBook } from '@/services/sync/legado/sync';
 import { cfiFromLegadoProgress } from '@/services/sync/legado/position';
 import { legadoProgressFromRange } from '@/services/sync/legado/position';
@@ -89,24 +88,10 @@ const providerSupportsLegado = (provider: unknown): provider is {
  */
 
 /**
- * Debounce window for auto-push triggered by progress / booknote churn.
- *
- * Trailing-only: every page turn restarts the timer, so the window is the
- * longest a position can sit unpublished during a reading pause. At 15 s a
- * steady reader kept resetting it and their position reached the other device
- * minutes late, or not until the book was closed (#5883). 5 s matches KOSync's
- * push debounce and sits between Readest Cloud's 3 s and the old value.
+ * Debounce window for the manual push path. A click flushes immediately, so
+ * the debounce only coalesces rapid successive manual triggers.
  */
 const PUSH_DEBOUNCE_MS = 5_000;
-/** Minimum gap between automatic pulls (e.g. window-focus, open-book). */
-const PULL_COOLDOWN_MS = 60_000;
-/**
- * If this hook ran a successful pull less than this long ago for the current
- * book, skip the open-book pull entirely. `lastPulledAtRef` is instance state,
- * so close-then-reopen resets it; the skip only fires on re-runs within one hook
- * lifetime (navigating between books, or progress arriving in two ticks).
- */
-const OPEN_PULL_SKIP_MS = 30_000;
 
 /**
  * Whether a pull actually landed a remote reading position: the merged
@@ -129,9 +114,6 @@ export const useFileSync = (bookKey: string) => {
   const setConfig = useBookDataStore((s) => s.setConfig);
   const getBookData = useBookDataStore((s) => s.getBookData);
   const saveConfig = useBookDataStore((s) => s.saveConfig);
-  // Reactive: triggers the auto-push effect on page turns.
-  const progress = useBookProgress(bookKey);
-
   // Every enabled third-party backend syncs this book in parallel (#5062);
   // Readest Cloud's native progress sync is useProgressSync's job, not this
   // hook's, and runs independently.
@@ -142,9 +124,6 @@ export const useFileSync = (bookKey: string) => {
 
   /** Flips true on the first local change after a push, false right before each push. */
   const dirtyRef = useRef(false);
-  /** Last successful pull timestamp; gates window-focus and open-book pulls. */
-  const lastPulledAtRef = useRef(0);
-  const hasPulledOnce = useRef(false);
   /** Backends whose book binary this instance already pushed. */
   const fileSyncedRef = useRef(new Set<FileSyncBackendKind>());
   /** Backends whose cover this instance already pushed. */
@@ -161,10 +140,8 @@ export const useFileSync = (bookKey: string) => {
   // newly-active backends do a fresh pull-on-open and re-check file/cover.
   const activeKindsKey = activeKinds.join(',');
   useEffect(() => {
-    hasPulledOnce.current = false;
     fileSyncedRef.current.clear();
     coverSyncedRef.current.clear();
-    lastPulledAtRef.current = 0;
     dirtyRef.current = false;
     authNotifiedRef.current.clear();
   }, [activeKindsKey]);
@@ -547,7 +524,6 @@ export const useFileSync = (bookKey: string) => {
         const result = legadoOnly
           ? { applied: false as const }
           : await engine.pullBookConfig(book, working);
-        lastPulledAtRef.current = Date.now();
         // This backend's getAccessToken succeeded — clear its own
         // expired-session notice without touching a sibling's.
         authNotifiedRef.current.delete(kind);
@@ -691,57 +667,8 @@ export const useFileSync = (bookKey: string) => {
     [],
   );
 
-  const markDirtyAndSchedule = useCallback(() => {
-    dirtyRef.current = true;
-    debouncedPush();
-  }, [debouncedPush]);
-
-  // Pull once on book open (waiting for a known location), then push if the
-  // remote was empty so the per-book directory is created on first use. The
-  // book-file/cover uploads ride along on the same trigger.
-  useEffect(() => {
-    if (!isReady) return;
-    if (!progress?.location) return;
-    if (hasPulledOnce.current) return;
-    hasPulledOnce.current = true;
-    if (Date.now() - lastPulledAtRef.current < OPEN_PULL_SKIP_MS) return;
-    (async () => {
-      const merged = await syncRefs.current.pullNow();
-      if (!merged) {
-        dirtyRef.current = true;
-        await syncRefs.current.pushNow();
-      }
-      await Promise.all([syncRefs.current.pushBookCoverNow(), syncRefs.current.pushBookFileNow()]);
-    })();
-  }, [isReady, progress?.location]);
-
-  // Auto-push on progress changes (debounced; the dirty check short-circuits).
-  useEffect(() => {
-    if (!isReady) return;
-    if (!progress?.location) return;
-    markDirtyAndSchedule();
-  }, [isReady, progress?.location, markDirtyAndSchedule]);
-
-  // Booknote mutations: hash on length + max(updatedAt, deletedAt) so a pure
-  // re-render with a fresh array reference doesn't fire a push.
-  const config = getConfig(bookKey);
-  const booknoteFingerprint = useMemo(() => {
-    const notes = config?.booknotes ?? [];
-    let max = 0;
-    for (const n of notes) {
-      const t = Math.max(n.updatedAt ?? 0, n.deletedAt ?? 0);
-      if (t > max) max = t;
-    }
-    return `${notes.length}:${max}`;
-  }, [config?.booknotes]);
-  useEffect(() => {
-    if (!isReady) return;
-    // The first render after a pull populates booknotes; don't treat as an edit.
-    if (Date.now() - lastPulledAtRef.current < 1_000) return;
-    markDirtyAndSchedule();
-  }, [isReady, booknoteFingerprint, markDirtyAndSchedule]);
-
-  // Manual triggers: settings UI / reader-close can dispatch these.
+  // Manual triggers only: the reader's Sync menu item, settings UI, and
+  // explicit per-book sync actions. Nothing in this hook runs automatically.
   useEffect(() => {
     const handlePush = (event: CustomEvent) => {
       if (event.detail?.bookKey && event.detail.bookKey !== bookKey) return;
@@ -754,37 +681,31 @@ export const useFileSync = (bookKey: string) => {
     };
     const handlePull = (event: CustomEvent) => {
       if (event.detail?.bookKey && event.detail.bookKey !== bookKey) return;
-      lastPulledAtRef.current = 0;
-      hasPulledOnce.current = false;
+      syncRefs.current.pullNow();
+    };
+    // The reader's manual "Sync" button: push local changes first, then pull
+    // so remote changes merge back on top (mirrors the native cloud flow).
+    const handleManualSync = (event: CustomEvent) => {
+      if (event.detail?.bookKey && event.detail.bookKey !== bookKey) return;
+      dirtyRef.current = true;
+      fileSyncedRef.current.clear();
+      coverSyncedRef.current.clear();
+      debouncedPush.flush();
+      syncRefs.current.pushBookFileNow();
+      syncRefs.current.pushBookCoverNow();
       syncRefs.current.pullNow();
     };
     eventDispatcher.on('push-file-sync', handlePush);
     eventDispatcher.on('pull-file-sync', handlePull);
     eventDispatcher.on('flush-file-sync', handlePush);
+    eventDispatcher.on('sync-book-progress', handleManualSync);
     return () => {
       eventDispatcher.off('push-file-sync', handlePush);
       eventDispatcher.off('pull-file-sync', handlePull);
       eventDispatcher.off('flush-file-sync', handlePush);
+      eventDispatcher.off('sync-book-progress', handleManualSync);
     };
   }, [bookKey, debouncedPush]);
-
-  // Window blur ⇒ push pending changes. Window focus ⇒ pull (cooldown-gated).
-  useWindowActiveChanged((isActive) => {
-    if (!isReady) return;
-    if (isActive) {
-      if (Date.now() - lastPulledAtRef.current < PULL_COOLDOWN_MS) return;
-      syncRefs.current.pullNow();
-    } else if (dirtyRef.current) {
-      debouncedPush.flush();
-    }
-  });
-
-  // Flush any pending debounced push when the hook unmounts (book closed).
-  useEffect(() => {
-    return () => {
-      debouncedPush.flush();
-    };
-  }, [debouncedPush]);
 
   return { pushNow, pullNow };
 };

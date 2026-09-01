@@ -7,7 +7,6 @@ import { useSettingsStore } from '@/store/settingsStore';
 import { useTranslation } from '@/hooks/useTranslation';
 import { syncSubscribedCatalogs } from '@/services/opds';
 import { queueOPDSBookUploads } from '@/services/opds/cloudUpload';
-import { AUTO_CHECK_INTERVAL_MS } from '@/services/opds/types';
 import { eventDispatcher } from '@/utils/event';
 
 export function useOPDSSubscriptions() {
@@ -89,32 +88,13 @@ export function useOPDSSubscriptions() {
     [_, appService, libraryLoaded, user],
   );
 
-  // Auto-trigger on startup after library is loaded
-  useEffect(() => {
-    if (!libraryLoaded) return;
-    checkOPDSSubscriptions();
-  }, [libraryLoaded, checkOPDSSubscriptions]);
-
-  // Listen for explicit re-check requests (e.g. user enables auto-download
-  // on a catalog and we want to sync immediately rather than wait for the
-  // next app launch).
+  // Manual only: explicit re-check requests (pull-to-refresh, enabling
+  // auto-download on a catalog). No startup or periodic auto-sync.
   useEffect(() => {
     const handler = () => checkOPDSSubscriptions(true);
     eventDispatcher.on('check-opds-subscriptions', handler);
     return () => eventDispatcher.off('check-opds-subscriptions', handler);
   }, [checkOPDSSubscriptions]);
-
-  // Periodic background check. Silent (no toasts) so it doesn't surprise the
-  // user with notifications every 5 minutes; new books just appear in the
-  // library when they finish downloading. The function is a no-op when no
-  // catalogs have autoDownload enabled, so the timer is cheap.
-  useEffect(() => {
-    if (!libraryLoaded) return;
-    const intervalId = setInterval(() => {
-      checkOPDSSubscriptions(false);
-    }, AUTO_CHECK_INTERVAL_MS);
-    return () => clearInterval(intervalId);
-  }, [libraryLoaded, checkOPDSSubscriptions]);
 
   return { checkOPDSSubscriptions };
 }

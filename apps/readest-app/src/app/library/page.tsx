@@ -372,9 +372,8 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
   useTransferQueue(libraryLoaded);
 
   const { pullLibrary, pushLibrary } = useBooksSync();
-  // Library-scoped auto-sync for the active third-party cloud provider (WebDAV /
-  // Google Drive): keeps library.json current on import / delete / book-close,
-  // parity with useBooksSync. No-op when no provider is enabled.
+  // Library-scoped auto-sync is disabled: sync only runs from explicit user
+  // actions (SettingsMenu sync row, pull-to-refresh, integration "Sync now").
   useLibraryFileSync();
   const { checkOPDSSubscriptions } = useOPDSSubscriptions();
   useABSSync();

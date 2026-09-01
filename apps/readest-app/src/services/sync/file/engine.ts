@@ -501,8 +501,21 @@ export class FileSyncEngine {
   /** PUT the shared library.json index, creating its parent dirs. */
   async pushLibraryIndex(index: RemoteLibraryIndex): Promise<void> {
     const path = buildLibraryPath(this.provider.rootPath);
-    await this.ensureDirs(ancestorsOf(path));
-    await this.provider.writeText(path, JSON.stringify(index));
+    const dirs = ancestorsOf(path);
+    await this.ensureDirs(dirs);
+    try {
+      await this.provider.writeText(path, JSON.stringify(index));
+    } catch (e) {
+      // Mirror the per-book write retry: a parent that vanished between
+      // MKCOL and PUT (or a server that answers 409 for an existing
+      // collection) is healed by one re-ensure + retry.
+      if (e instanceof FileSyncError && e.status === 409) {
+        await this.ensureDirs(dirs);
+        await this.provider.writeText(path, JSON.stringify(index));
+        return;
+      }
+      throw e;
+    }
   }
 
   /**

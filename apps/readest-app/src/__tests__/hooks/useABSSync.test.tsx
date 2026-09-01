@@ -71,7 +71,7 @@ afterEach(() => {
 });
 
 describe('useABSSync', () => {
-  test('syncs once on mount when the store is already hydrated with servers', async () => {
+  test('does not sync on mount even when servers are already hydrated', async () => {
     useABSServerStore.setState({ servers: [server] });
     useSettingsStore.setState({ settings: makeSettings({ absServers: [server] }) });
     mockedSync.mockResolvedValue();
@@ -79,11 +79,10 @@ describe('useABSSync', () => {
     renderHook(() => useABSSync());
     await settle();
 
-    expect(mockedSync).toHaveBeenCalledTimes(1);
-    expect(mockedSync).toHaveBeenCalledWith(appService);
+    expect(mockedSync).not.toHaveBeenCalled();
   });
 
-  test('backfills covers before the authenticated sync so a failing login cannot block them', async () => {
+  test('does not sync or backfill covers on mount', async () => {
     useABSServerStore.setState({ servers: [server] });
     const order: string[] = [];
     mockedBackfill.mockImplementation(async () => {
@@ -96,8 +95,9 @@ describe('useABSSync', () => {
     renderHook(() => useABSSync());
     await settle();
 
-    expect(order).toEqual(['backfill', 'sync']);
-    expect(mockedBackfill).toHaveBeenCalledWith(appService);
+    expect(order).toEqual([]);
+    expect(mockedBackfill).not.toHaveBeenCalled();
+    expect(mockedSync).not.toHaveBeenCalled();
   });
 
   test('does not sync when neither the store nor settings have servers', async () => {
@@ -109,27 +109,8 @@ describe('useABSSync', () => {
     expect(mockedSync).not.toHaveBeenCalled();
   });
 
-  test('hydrates the empty store from settings on mount, then syncs', async () => {
-    // Reproduces the fresh-boot bug: the store was never populated (no
-    // IntegrationsPanel mount, no replica pull), but settings.absServers
-    // already has the persisted server. The hook must hydrate before its
-    // empty-store no-op check runs.
-    useSettingsStore.setState({ settings: makeSettings({ absServers: [server] }) });
-    mockedSync.mockResolvedValue();
-
-    renderHook(() => useABSSync());
-    await settle();
-
-    expect(useABSServerStore.getState().getAvailableServers()).toEqual([server]);
-    expect(mockedSync).toHaveBeenCalledTimes(1);
-    expect(mockedSync).toHaveBeenCalledWith(appService);
-  });
-
-  // `EnvProvider` publishes `appService` BEFORE `appService.loadSettings()`
-  // resolves, so the mount-time hydration can read the `{}` placeholder
-  // settings. Caching that empty result stranded ABS sync for the whole
-  // session — and left every `saveABSServers` publishing an empty list.
-  test('re-hydrates when the first attempt ran before settings loaded', async () => {
+  // Manual sync must still hydrate before the empty-store no-op check runs.
+  test('re-hydrates before a manual sync-abs-servers event runs', async () => {
     useSettingsStore.setState({ settings: {} as SystemSettings });
     mockedSync.mockResolvedValue();
 
@@ -137,7 +118,7 @@ describe('useABSSync', () => {
     await settle();
     expect(mockedSync).not.toHaveBeenCalled();
 
-    // Settings land after that first attempt.
+    // Settings land before the user clicks Sync Now.
     useSettingsStore.setState({ settings: makeSettings({ absServers: [server] }) });
     await act(async () => {
       await eventDispatcher.dispatch('sync-abs-servers');
@@ -162,7 +143,7 @@ describe('useABSSync', () => {
     expect(mockedSync).toHaveBeenCalledTimes(1);
   });
 
-  test('unmount clears the interval', async () => {
+  test('no periodic timer exists — advancing time after mount never syncs', async () => {
     vi.useFakeTimers();
     try {
       useABSServerStore.setState({ servers: [server] });
@@ -174,14 +155,14 @@ describe('useABSSync', () => {
         await Promise.resolve();
         await Promise.resolve();
       });
-      expect(mockedSync).toHaveBeenCalledTimes(1);
+      expect(mockedSync).not.toHaveBeenCalled();
 
       unmount();
       await act(async () => {
         vi.advanceTimersByTime(5 * 60 * 1000);
       });
 
-      expect(mockedSync).toHaveBeenCalledTimes(1);
+      expect(mockedSync).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
     }

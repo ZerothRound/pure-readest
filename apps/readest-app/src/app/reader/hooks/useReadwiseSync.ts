@@ -1,14 +1,11 @@
-import { useCallback, useEffect, useMemo } from 'react';
+import { useCallback, useEffect } from 'react';
 import { useSettingsStore } from '@/store/settingsStore';
 import { useBookDataStore } from '@/store/bookDataStore';
 import { useEnv } from '@/context/EnvContext';
 import { useTranslation } from '@/hooks/useTranslation';
 import { eventDispatcher } from '@/utils/event';
-import { debounce } from '@/utils/debounce';
 import { getPublicCoverUrl } from '@/utils/cover';
 import { ReadwiseClient } from '@/services/readwise';
-
-const READWISE_SYNC_DEBOUNCE_MS = 5000;
 
 export const useReadwiseSync = (bookKey: string) => {
   const _ = useTranslation();
@@ -27,37 +24,6 @@ export const useReadwiseSync = (bookKey: string) => {
       await saveSettings(envConfig, newSettings);
     },
     [envConfig],
-  );
-
-  // useMemo (not useCallback) so the debounce timer isn't reset on every render
-  const debouncedPush = useMemo(
-    () =>
-      debounce(async () => {
-        const { settings } = useSettingsStore.getState();
-        if (!settings.readwise?.enabled || !settings.readwise?.accessToken) return;
-        const client = new ReadwiseClient(settings.readwise);
-        const book = getBookData(bookKey)?.book;
-        const config = getConfig(bookKey);
-        if (!book || !config?.booknotes) return;
-
-        const lastSyncedAt = settings.readwise.lastSyncedAt ?? 0;
-        const newNotes = config.booknotes.filter(
-          (n) => n.updatedAt > lastSyncedAt || (n.deletedAt ?? 0) > lastSyncedAt,
-        );
-        if (newNotes.length === 0) return;
-
-        const coverImageUrl =
-          (settings.readwise.includeCoverImage ?? true)
-            ? await getPublicCoverUrl(book, appService)
-            : undefined;
-        const result = await client.pushHighlights(newNotes, book, coverImageUrl);
-        if (result.success) {
-          await updateLastSyncedAt(Date.now());
-        } else if (!result.isNetworkError) {
-          console.error('Readwise sync failed:', result.message);
-        }
-      }, READWISE_SYNC_DEBOUNCE_MS),
-    [bookKey, getBookData, getConfig, updateLastSyncedAt, appService],
   );
 
   // Manual "Push All": sends every annotation/excerpt regardless of sync timestamp
@@ -89,13 +55,6 @@ export const useReadwiseSync = (bookKey: string) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bookKey, getBookData, getConfig, updateLastSyncedAt, appService]);
 
-  // Cancel any pending debounced sync on unmount to avoid background network requests
-  useEffect(() => {
-    return () => {
-      debouncedPush.cancel();
-    };
-  }, [debouncedPush]);
-
   // Listen for manual push-all events dispatched from BookMenu / BooknoteView
   useEffect(() => {
     const handlePushAll = async (e: CustomEvent) => {
@@ -107,13 +66,6 @@ export const useReadwiseSync = (bookKey: string) => {
       eventDispatcher.off('readwise-push-all', handlePushAll);
     };
   }, [bookKey, pushAllHighlights]);
-
-  // Auto-sync whenever booknotes change; debouncedPush reads enabled state internally
-  const config = getConfig(bookKey);
-  useEffect(() => {
-    debouncedPush();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [config?.booknotes]);
 
   return { pushAllHighlights };
 };

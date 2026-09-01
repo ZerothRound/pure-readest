@@ -189,8 +189,8 @@ const ReaderContent: React.FC<{ ids?: string; settings: SystemSettings }> = ({ i
     const { isPrimary } = getViewState(bookKey) || {};
     if (isPrimary && book && config) {
       const settings = useSettingsStore.getState().settings;
-      eventDispatcher.dispatch('sync-book-progress', { bookKey });
-      eventDispatcher.dispatch('flush-kosync', { bookKey });
+      // Automatic sync on book close is disabled: progress/notes are saved
+      // locally here, and cloud sync only runs from an explicit user action.
       await saveConfig(envConfig, bookKey, config, settings);
     }
   };

@@ -17,6 +17,11 @@ const waitFor = <T>(callback: () => T | Promise<T>) =>
  * pull merge CHAIN — backend 2 must merge on top of what backend 1 already
  * merged, not the original local config, or backend 1's contribution is
  * silently dropped.
+ *
+ * Auto-sync is disabled: nothing runs on book open, page turn, or window
+ * focus. Every sync below is driven by the manual event bridge
+ * (`push-file-sync` / `pull-file-sync` / `flush-file-sync` / the reader's
+ * `sync-book-progress` button).
  */
 
 const pushBookConfig = vi.fn(
@@ -73,10 +78,6 @@ vi.mock('@/hooks/useTranslation', () => ({
 const envMocks = vi.hoisted(() => ({ envConfig: {}, appService: {} }));
 vi.mock('@/context/EnvContext', () => ({
   useEnv: () => envMocks,
-}));
-
-vi.mock('@/app/reader/hooks/useWindowActiveChanged', () => ({
-  useWindowActiveChanged: () => {},
 }));
 
 const settingsState = vi.hoisted(() => ({
@@ -149,12 +150,8 @@ vi.mock('@/store/readerStore', () => {
   return { useReaderStore };
 });
 
-// Mutable so lock tests can drive the real user path: dispatch the manual
-// pull event, then change the location (a page turn) to make the open-book
-// effect re-fire, instead of calling the uploaders directly.
-const progressState = vi.hoisted(() => ({ location: 'local-loc' }));
 vi.mock('@/store/readerProgressStore', () => ({
-  useBookProgress: () => ({ location: progressState.location }),
+  useBookProgress: () => ({ location: 'local-loc' }),
 }));
 
 const { useFileSync } = await import('@/app/reader/hooks/useFileSync');
@@ -176,6 +173,23 @@ const noteB: BookNote = {
   updatedAt: 2,
 };
 
+const BOOK_KEY = 'h1-view1';
+
+/** Wait for the async engine-building effect to finish before dispatching. */
+const settleEffects = async () => {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+};
+
+/** Dispatch one manual sync event for this book, as the UI would. */
+const dispatchSync = async (name: string) => {
+  await act(async () => {
+    eventDispatcher.dispatch(name, { bookKey: BOOK_KEY });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+};
+
 beforeEach(() => {
   vi.clearAllMocks();
   routing.backends = ['webdav', 'gdrive'];
@@ -184,7 +198,6 @@ beforeEach(() => {
     googleDrive: { enabled: true },
   } as unknown as SystemSettings;
   bookDataState.config = { updatedAt: 1, location: 'local-loc', booknotes: [] };
-  progressState.location = 'local-loc';
   pushBookConfig.mockResolvedValue(undefined);
   pullBookConfig.mockResolvedValue({ applied: false } as never);
   pushBookFile.mockResolvedValue({ uploaded: true });
@@ -196,6 +209,19 @@ afterEach(() => {
 });
 
 describe('useFileSync across multiple backends (#5062)', () => {
+  test('does not sync automatically on mount', async () => {
+    renderHook(() => useFileSync(BOOK_KEY));
+    await settleEffects();
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+
+    expect(pullBookConfig).not.toHaveBeenCalled();
+    expect(pushBookConfig).not.toHaveBeenCalled();
+    expect(pushBookFile).not.toHaveBeenCalled();
+    expect(pushBookCover).not.toHaveBeenCalled();
+  });
+
   test('pulling from two backends chains the merges', async () => {
     // Backend 1 (webdav) merges in a newer location; backend 2 (gdrive) must
     // receive THAT config, not the original local one, so both mirrors'
@@ -212,7 +238,9 @@ describe('useFileSync across multiple backends (#5062)', () => {
         mergedNotes: [noteA, noteB],
       } as never);
 
-    renderHook(() => useFileSync('h1-view1'));
+    renderHook(() => useFileSync(BOOK_KEY));
+    await settleEffects();
+    await dispatchSync('pull-file-sync');
 
     await waitFor(() => expect(pullBookConfig).toHaveBeenCalledTimes(2));
 
@@ -220,15 +248,15 @@ describe('useFileSync across multiple backends (#5062)', () => {
     // not the original local config.
     expect(pullBookConfig.mock.calls[1]?.[1]).toMatchObject({ location: 'from-webdav' });
     expect(setConfigMock).toHaveBeenCalledWith(
-      'h1-view1',
+      BOOK_KEY,
       expect.objectContaining({ booknotes: [noteA, noteB] }),
     );
   });
 
-  test('pushes the config to every enabled backend', async () => {
-    // The default pull resolves `applied: false` (empty remote), which makes
-    // the open-pull effect fall through to an immediate push.
-    renderHook(() => useFileSync('h1-view1'));
+  test('pushes the config to every enabled backend on manual sync', async () => {
+    renderHook(() => useFileSync(BOOK_KEY));
+    await settleEffects();
+    await dispatchSync('flush-file-sync');
 
     await waitFor(() => expect(pushBookConfig).toHaveBeenCalledTimes(2));
   });
@@ -236,18 +264,14 @@ describe('useFileSync across multiple backends (#5062)', () => {
   test('one backend failing does not stop the other', async () => {
     pushBookConfig.mockRejectedValueOnce(new Error('drive down')).mockResolvedValueOnce(undefined);
 
-    renderHook(() => useFileSync('h1-view1'));
+    renderHook(() => useFileSync(BOOK_KEY));
+    await settleEffects();
+    await dispatchSync('flush-file-sync');
 
     await waitFor(() => expect(pushBookConfig).toHaveBeenCalledTimes(2));
   });
 });
 
-/**
- * Review fixes on top of the initial multi-backend conversion: a single
- * boolean auth-notified guard re-firing forever, a cross-backend sub-toggle
- * leak in the pull chain, and three failure-isolation / lock-release paths
- * that were never pinned by a test.
- */
 describe('useFileSync review fixes', () => {
   test('one backend pull failing does not stop the other from applying (no break in the catch)', async () => {
     // webdav's pull throws; gdrive's must still run and its merge must still
@@ -258,26 +282,18 @@ describe('useFileSync review fixes', () => {
       mergedConfig: { updatedAt: 2, location: 'from-gdrive', booknotes: [] },
     } as never);
 
-    renderHook(() => useFileSync('h1-view1'));
+    renderHook(() => useFileSync(BOOK_KEY));
+    await settleEffects();
+    await dispatchSync('pull-file-sync');
 
     await waitFor(() => expect(pullBookConfig).toHaveBeenCalledTimes(2));
     expect(setConfigMock).toHaveBeenCalledWith(
-      'h1-view1',
+      BOOK_KEY,
       expect.objectContaining({ location: 'from-gdrive' }),
     );
   });
 
-  // These four tests drive the real user path instead of calling the
-  // uploaders directly: `handlePull` (the manual "Sync now" pull bridge)
-  // resets `lastPulledAtRef` / `hasPulledOnce` but does NOT touch the upload
-  // locks, so the open-book effect re-firing on the next `progress.location`
-  // change (a page turn) re-runs `pushBookFileNow` / `pushBookCoverNow` with
-  // the locks intact — a genuine "tap Sync now, then turn a page" flow.
-  // Every `pullBookConfig` call is made to reject so `lastPulledAtRef` stays
-  // 0 and the `OPEN_PULL_SKIP_MS` gate never blocks the re-run; no fake
-  // timers needed.
-
-  test('a failed book-file upload releases the backend lock so a later attempt retries', async () => {
+  test('a failed book-file upload releases the backend lock so a later manual sync retries', async () => {
     routing.backends = ['webdav'];
     settingsState.settings = {
       webdav: {
@@ -288,24 +304,20 @@ describe('useFileSync review fixes', () => {
         syncBooks: true,
       },
     } as unknown as SystemSettings;
-    pullBookConfig.mockRejectedValue(new Error('remote unreachable'));
     pushBookFile.mockRejectedValueOnce(new Error('network blip'));
 
-    const { rerender } = renderHook(() => useFileSync('h1-view1'));
+    renderHook(() => useFileSync(BOOK_KEY));
+    await settleEffects();
 
-    // The natural book-open flow drives the first (failing) attempt.
+    await dispatchSync('push-file-sync');
     await waitFor(() => expect(pushBookFile).toHaveBeenCalledTimes(1));
 
-    // Tap "Sync now", then turn a page.
-    await eventDispatcher.dispatch('pull-file-sync', { bookKey: 'h1-view1' });
-    progressState.location = 'local-loc-2';
-    rerender();
-
     // Must retry because the failed attempt released its own lock.
+    await dispatchSync('push-file-sync');
     await waitFor(() => expect(pushBookFile).toHaveBeenCalledTimes(2));
   });
 
-  test('a backend that uploaded its book file successfully is not re-uploaded on a later attempt', async () => {
+  test('a successful book-file upload is re-checked by a later manual sync (engine HEAD short-circuits real uploads)', async () => {
     routing.backends = ['webdav'];
     settingsState.settings = {
       webdav: {
@@ -316,65 +328,42 @@ describe('useFileSync review fixes', () => {
         syncBooks: true,
       },
     } as unknown as SystemSettings;
-    pullBookConfig.mockRejectedValue(new Error('remote unreachable'));
-    // Default mock resolves { uploaded: true } — the natural attempt succeeds.
 
-    const { rerender } = renderHook(() => useFileSync('h1-view1'));
+    renderHook(() => useFileSync(BOOK_KEY));
+    await settleEffects();
 
+    await dispatchSync('push-file-sync');
     await waitFor(() => expect(pushBookFile).toHaveBeenCalledTimes(1));
 
-    // Tap "Sync now", then turn a page.
-    await eventDispatcher.dispatch('pull-file-sync', { bookKey: 'h1-view1' });
-    progressState.location = 'local-loc-2';
-    rerender();
-
-    // The second push cycle has been entered (proxy signal for the re-fired
-    // effect having run), then flush any remaining microtasks.
-    await waitFor(() => expect(pushBookConfig).toHaveBeenCalledTimes(2));
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
-    // Still 1 — the lock from the successful attempt stays set.
-    expect(pushBookFile).toHaveBeenCalledTimes(1);
+    await dispatchSync('push-file-sync');
+    await waitFor(() => expect(pushBookFile).toHaveBeenCalledTimes(2));
   });
 
-  test('a failed cover upload releases the backend lock so a later attempt retries', async () => {
+  test('a failed cover upload releases the backend lock so a later manual sync retries', async () => {
     routing.backends = ['webdav'];
-    pullBookConfig.mockRejectedValue(new Error('remote unreachable'));
     pushBookCover.mockRejectedValueOnce(new Error('network blip'));
 
-    const { rerender } = renderHook(() => useFileSync('h1-view1'));
+    renderHook(() => useFileSync(BOOK_KEY));
+    await settleEffects();
 
+    await dispatchSync('push-file-sync');
     await waitFor(() => expect(pushBookCover).toHaveBeenCalledTimes(1));
 
-    // Tap "Sync now", then turn a page.
-    await eventDispatcher.dispatch('pull-file-sync', { bookKey: 'h1-view1' });
-    progressState.location = 'local-loc-2';
-    rerender();
-
+    await dispatchSync('push-file-sync');
     await waitFor(() => expect(pushBookCover).toHaveBeenCalledTimes(2));
   });
 
-  test('a backend that uploaded its cover successfully is not re-uploaded on a later attempt', async () => {
+  test('a successful cover upload is re-checked by a later manual sync', async () => {
     routing.backends = ['webdav'];
-    pullBookConfig.mockRejectedValue(new Error('remote unreachable'));
-    // Default mock resolves { uploaded: true } — the natural attempt succeeds.
 
-    const { rerender } = renderHook(() => useFileSync('h1-view1'));
+    renderHook(() => useFileSync(BOOK_KEY));
+    await settleEffects();
 
+    await dispatchSync('push-file-sync');
     await waitFor(() => expect(pushBookCover).toHaveBeenCalledTimes(1));
 
-    // Tap "Sync now", then turn a page.
-    await eventDispatcher.dispatch('pull-file-sync', { bookKey: 'h1-view1' });
-    progressState.location = 'local-loc-2';
-    rerender();
-
-    await waitFor(() => expect(pushBookConfig).toHaveBeenCalledTimes(2));
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
-    // Still 1 — the lock from the successful attempt stays set.
-    expect(pushBookCover).toHaveBeenCalledTimes(1);
+    await dispatchSync('push-file-sync');
+    await waitFor(() => expect(pushBookCover).toHaveBeenCalledTimes(2));
   });
 
   test('the expired-session hint fires once per backend across many push cycles while a sibling keeps succeeding', async () => {
@@ -399,13 +388,14 @@ describe('useFileSync review fixes', () => {
     };
     eventDispatcher.on('hint', onHint);
 
-    const { result } = renderHook(() => useFileSync('h1-view1'));
+    const { result } = renderHook(() => useFileSync(BOOK_KEY));
+    await settleEffects();
 
-    // Cycle 1: the natural book-open flow (default pull resolves
-    // `applied: false`, which falls through to an immediate push).
+    // Cycle 1: manual flush.
+    await dispatchSync('flush-file-sync');
     await waitFor(() => expect(pushBookConfig).toHaveBeenCalledTimes(2));
 
-    // Cycles 2 and 3, driven directly instead of waiting on the 15s debounce.
+    // Cycles 2 and 3, driven directly instead of waiting on the debounce.
     await act(async () => {
       await result.current.pushNow();
     });
@@ -459,20 +449,23 @@ describe('useFileSync review fixes', () => {
           }) as never,
       );
 
-    renderHook(() => useFileSync('h1-view1'));
+    renderHook(() => useFileSync(BOOK_KEY));
+    await settleEffects();
+    await dispatchSync('pull-file-sync');
 
     await waitFor(() => expect(pullBookConfig).toHaveBeenCalledTimes(2));
     expect(setConfigMock).toHaveBeenCalledWith(
-      'h1-view1',
+      BOOK_KEY,
       expect.objectContaining({ booknotes: [noteB] }),
     );
   });
 
   test('a push cycle across two backends stamps lastSyncedAt in a single settings save, not one per backend', async () => {
     // Default routing (`beforeEach`) already enables two backends (webdav, gdrive).
-    const { result } = renderHook(() => useFileSync('h1-view1'));
+    const { result } = renderHook(() => useFileSync(BOOK_KEY));
+    await settleEffects();
 
-    // Let the natural book-open flow settle before isolating a single cycle.
+    await dispatchSync('flush-file-sync');
     await waitFor(() => expect(pushBookConfig).toHaveBeenCalledTimes(2));
     saveSettingsMock.mockClear();
 

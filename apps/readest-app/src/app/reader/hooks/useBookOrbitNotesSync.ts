@@ -4,7 +4,6 @@ import type { PositionResolver } from '@/services/bookorbit/annotationExchange';
 import { BookOrbitClient } from '@/services/bookorbit/BookOrbitClient';
 import { BookOrbitSyncStore } from '@/services/bookorbit/BookOrbitSyncStore';
 import { runBookOrbitNotesPass } from '@/services/bookorbit/notesPass';
-import { SYNC_NOTES_INTERVAL_SEC } from '@/services/constants';
 import { useBookDataStore } from '@/store/bookDataStore';
 import { useReaderStore } from '@/store/readerStore';
 import { useSettingsStore } from '@/store/settingsStore';
@@ -12,9 +11,7 @@ import { useTranslation } from '@/hooks/useTranslation';
 import { BookNote, FIXED_LAYOUT_FORMATS } from '@/types/book';
 import { getIndexFromCfi } from '@/utils/cfi';
 import { eventDispatcher } from '@/utils/event';
-import { throttle } from '@/utils/throttle';
 import { XCFI, getCFIFromXPointer, getXPointerFromCFI } from '@/utils/xcfi';
-import { useWindowActiveChanged } from './useWindowActiveChanged';
 
 /**
  * Bidirectional highlight/bookmark sync with a BookOrbit server, mounted
@@ -222,19 +219,16 @@ export const useBookOrbitNotesSync = (bookKey: string) => {
     runPassRef.current = runPass;
   }, [runPass]);
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const throttledPass = useCallback(
-    throttle(() => runPassRef.current(), SYNC_NOTES_INTERVAL_SEC * 1000, { emitLast: false }),
-    [],
-  );
-
+  // Manual only: the reader's "Sync" menu item runs one BookOrbit pass.
+  // Nothing in this hook syncs automatically.
   useEffect(() => {
-    if (!client || !config?.location) return;
-    throttledPass();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [client, config?.location, config?.booknotes, throttledPass]);
-
-  useWindowActiveChanged((isActive) => {
-    if (!isActive) runPassRef.current();
-  });
+    const handleManualSync = (event: CustomEvent) => {
+      if (event.detail?.bookKey && event.detail.bookKey !== bookKey) return;
+      runPassRef.current();
+    };
+    eventDispatcher.on('sync-book-progress', handleManualSync);
+    return () => {
+      eventDispatcher.off('sync-book-progress', handleManualSync);
+    };
+  }, [bookKey]);
 };

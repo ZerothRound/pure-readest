@@ -26,7 +26,6 @@ import {
   resolveRemoteLocalFraction,
   type RemoteFractionResolution,
 } from './kosyncProgress';
-import { useWindowActiveChanged } from './useWindowActiveChanged';
 
 type SyncState = 'idle' | 'checking' | 'conflict' | 'synced' | 'error';
 
@@ -409,7 +408,6 @@ export const useKOSync = (bookKey: string, provider: KosyncProgressProvider = ko
       const { pushProgress } = syncRefs.current;
       eventDispatcher.off('push-kosync', handlePushProgress);
       eventDispatcher.off('flush-kosync', handleFlush);
-      pushProgress.flush();
     };
   }, [bookKey]);
 
@@ -424,40 +422,6 @@ export const useKOSync = (bookKey: string, provider: KosyncProgressProvider = ko
       eventDispatcher.off('pull-kosync', handlePullProgress);
     };
   }, [bookKey]);
-
-  // Pull: pull progress once when the book is opened
-  useEffect(() => {
-    if (!appService || !kosyncClient || !progress?.location) return;
-    if (hasPulledOnce.current) return;
-
-    syncRefs.current.pullProgress();
-  }, [appService, kosyncClient, progress?.location]);
-
-  // Push: auto-push progress when progress changes with a debounce
-  useEffect(() => {
-    if (syncState === 'synced' && progress) {
-      // Skip auto-pushes while previewing a deep-link target. Manual pushes
-      // via the 'push-kosync' event are still respected (explicit user intent).
-      if (useReaderStore.getState().getViewState(bookKey)?.previewMode) return;
-      const config = provider.selectConfig(settings);
-      if (config?.enabled && config.strategy !== 'receive') {
-        syncRefs.current.pushProgress();
-      }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [progress, syncState, settings, bookKey]);
-
-  useWindowActiveChanged((isActive) => {
-    const { pushProgress, pullProgress } = syncRefs.current;
-
-    if (isActive) {
-      hasPulledOnce.current = false;
-      pullProgress();
-    } else {
-      pushProgress();
-      pushProgress.flush();
-    }
-  });
 
   const resolveWithLocal = () => {
     resolvedRemoteRef.current = conflictDetails?.remote ?? null;

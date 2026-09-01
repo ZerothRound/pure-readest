@@ -50,6 +50,7 @@ import { transferManager } from '@/services/transferManager';
 import { useLibraryStore } from '@/store/libraryStore';
 import { useSettingsStore } from '@/store/settingsStore';
 import { useOPDSSubscriptions } from '@/hooks/useOPDSSubscriptions';
+import { eventDispatcher } from '@/utils/event';
 
 const mockedSync = vi.mocked(syncSubscribedCatalogs);
 const mockedQueueUpload = vi.mocked(transferManager.queueUpload);
@@ -78,6 +79,15 @@ const catalog = {
 
 const settle = async () => {
   await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+};
+
+/** Manual re-check request, as pull-to-refresh / the catalog toggle sends. */
+const check = async () => {
+  await act(async () => {
+    eventDispatcher.dispatch('check-opds-subscriptions');
     await Promise.resolve();
     await Promise.resolve();
   });
@@ -112,7 +122,7 @@ describe('useOPDSSubscriptions', () => {
     });
 
     renderHook(() => useOPDSSubscriptions());
-    await settle();
+    await check();
 
     expect(saveLibraryBooks).toHaveBeenCalled();
     const saved = saveLibraryBooks.mock.lastCall![0];
@@ -141,7 +151,7 @@ describe('useOPDSSubscriptions', () => {
     });
 
     renderHook(() => useOPDSSubscriptions());
-    await settle();
+    await check();
 
     // The resurrection must reach disk: the subscription state has already
     // recorded the feed entry as known, so if the library is not saved the
@@ -169,7 +179,7 @@ describe('useOPDSSubscriptions', () => {
       });
 
       renderHook(() => useOPDSSubscriptions());
-      await settle();
+      await check();
       await act(async () => {
         vi.advanceTimersByTime(3000);
       });
@@ -200,7 +210,7 @@ describe('useOPDSSubscriptions', () => {
       });
 
       renderHook(() => useOPDSSubscriptions());
-      await settle();
+      await check();
       await act(async () => {
         vi.advanceTimersByTime(3000);
       });

@@ -1,8 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { act, cleanup, renderHook } from '@testing-library/react';
 
-const KOSYNC_PUSH_DEBOUNCE_MS = 5000;
-
 const h = vi.hoisted(() => {
   // A KOReader native position (CREngine XPointer). On iOS this frequently
   // fails to convert to a local CFI (Bug A), which is what triggers #5065.
@@ -69,9 +67,6 @@ const h = vi.hoisted(() => {
     getProgressMock: vi.fn(),
     updateProgressMock: vi.fn(async (..._args: unknown[]) => {}),
     eventListeners: new Map<string, Set<(e: CustomEvent) => void>>(),
-    // Captured useWindowActiveChanged callback — lets tests simulate the
-    // window losing/regaining visibility (e.g. a system dictionary popup).
-    activeCallback: null as ((isActive: boolean) => void) | null,
   };
 });
 
@@ -81,12 +76,6 @@ vi.mock('@/context/EnvContext', () => ({
 
 vi.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => (s: string) => s,
-}));
-
-vi.mock('@/app/reader/hooks/useWindowActiveChanged', () => ({
-  useWindowActiveChanged: (cb: (isActive: boolean) => void) => {
-    h.activeCallback = cb;
-  },
 }));
 
 vi.mock('@/store/settingsStore', () => ({
@@ -164,11 +153,8 @@ const settle = async () => {
   });
 };
 
-const advance = async (ms: number) => {
-  await act(async () => {
-    vi.advanceTimersByTime(ms);
-    await flushMicrotasks();
-  });
+const dispatch = (name: string, detail: unknown) => {
+  h.eventListeners.get(name)?.forEach((fn) => fn(new CustomEvent(name, { detail })));
 };
 
 beforeEach(() => {
@@ -200,7 +186,6 @@ beforeEach(() => {
   h.goTo.mockClear();
   h.goToFraction.mockClear();
   h.eventListeners.clear();
-  h.activeCallback = null;
 });
 
 afterEach(() => {
@@ -209,10 +194,15 @@ afterEach(() => {
 });
 
 describe('useKOSync — applying a newer remote position (#5065)', () => {
-  test('applies the newer remote position on open (silent strategy)', async () => {
+  test('applies the newer remote position on manual pull (silent strategy)', async () => {
     h.settings.kosync.strategy = 'silent';
     renderHook(() => useKOSync('h1-view1'));
     await settle();
+
+    await act(async () => {
+      dispatch('pull-kosync', { bookKey: 'h1-view1' });
+      await flushMicrotasks();
+    });
 
     // The remote XPointer resolves to a CFI and the reader jumps to it.
     expect(h.getProgressMock).toHaveBeenCalled();
@@ -221,41 +211,45 @@ describe('useKOSync — applying a newer remote position (#5065)', () => {
 });
 
 describe('useKOSync — no clobbering when the pull is unresolved (#5065)', () => {
-  test('does NOT auto-push (PUT) when an XPointer pull cannot be resolved, even if percentages match', async () => {
-    // iOS: the XPointer can't be converted to a local CFI, and KOReader's
-    // reported percentage coincidentally equals Readest's. Pre-fix this looked
-    // like "no conflict" → synced → auto-push overwrote the remote position.
+  test('never auto-pushes after mount or page turns (auto-sync disabled)', async () => {
+    // Auto-sync is disabled entirely: no pull on open, no debounced push on
+    // progress changes. The remote report may be unresolvable or matching —
+    // either way nothing may hit the wire without an explicit manual event.
     h.cfiResolves = false;
     const { rerender } = renderHook(() => useKOSync('h1-view1'));
     await settle();
 
-    // Simulate a page turn after the (unresolved) pull.
     h.localProgress = {
       ...(h.localProgress as Record<string, unknown>),
       location: 'epubcfi(/6/4!/4/2/8)',
     };
     rerender();
-    await advance(KOSYNC_PUSH_DEBOUNCE_MS + 500);
 
-    // The reader must stay in a conflict state — never silently PUT its stale
-    // local position over the remote one.
+    await act(async () => {
+      await flushMicrotasks();
+    });
+
     expect(h.updateProgressMock).not.toHaveBeenCalled();
+    expect(h.getProgressMock).not.toHaveBeenCalled();
   });
 
-  test('still auto-pushes for a genuine non-conflict (resolved position matches)', async () => {
-    // Positive control: when the XPointer resolves to a fraction that matches
-    // the local position, there is no conflict and auto-push works normally.
+  test('manual push publishes the local position after a manual pull', async () => {
+    // Positive control: explicit user intent still syncs — a manual pull is
+    // followed by a manual push and the position reaches the server.
     h.cfiResolves = true;
     h.view.getCFIProgress = vi.fn(async () => ({ fraction: 0.14 }));
-    const { rerender } = renderHook(() => useKOSync('h1-view1'));
+    h.settings.kosync.strategy = 'silent';
+    renderHook(() => useKOSync('h1-view1'));
     await settle();
 
-    h.localProgress = {
-      ...(h.localProgress as Record<string, unknown>),
-      location: 'epubcfi(/6/4!/4/2/8)',
-    };
-    rerender();
-    await advance(KOSYNC_PUSH_DEBOUNCE_MS + 500);
+    await act(async () => {
+      dispatch('pull-kosync', { bookKey: 'h1-view1' });
+      await flushMicrotasks();
+    });
+    await act(async () => {
+      dispatch('push-kosync', { bookKey: 'h1-view1' });
+      await flushMicrotasks();
+    });
 
     expect(h.updateProgressMock).toHaveBeenCalled();
     // Restore for other tests.
@@ -281,14 +275,24 @@ describe('useKOSync — no phantom re-prompt after resolving (#5527)', () => {
     const { result } = renderHook(() => useKOSync('h1-view1'));
     await settle();
 
+    await act(async () => {
+      dispatch('pull-kosync', { bookKey: 'h1-view1' });
+      await flushMicrotasks();
+    });
+
     expect(result.current.syncState).toBe('synced');
     expect(result.current.conflictDetails).toBeNull();
   });
 
-  test('an already-resolved unchanged remote report does not re-prompt on window re-activation', async () => {
+  test('an already-resolved unchanged remote report does not re-prompt on a repeated manual pull', async () => {
     // Genuine conflict on open: remote resolves to 0.6 vs local 0.14.
     const { result } = renderHook(() => useKOSync('h1-view1'));
     await settle();
+
+    await act(async () => {
+      dispatch('pull-kosync', { bookKey: 'h1-view1' });
+      await flushMicrotasks();
+    });
     expect(result.current.syncState).toBe('conflict');
 
     await act(async () => {
@@ -297,15 +301,10 @@ describe('useKOSync — no phantom re-prompt after resolving (#5527)', () => {
     });
     expect(result.current.syncState).toBe('synced');
 
-    // System dictionary popup: window hidden, then visible again. The re-pull
-    // still returns the exact report the user just resolved (the resolve-time
-    // push may not have landed on the server yet).
+    // The user pulls again and the server still returns the exact report they
+    // just resolved (the resolve-time push may not have landed yet).
     await act(async () => {
-      h.activeCallback?.(false);
-      await flushMicrotasks();
-    });
-    await act(async () => {
-      h.activeCallback?.(true);
+      dispatch('pull-kosync', { bookKey: 'h1-view1' });
       await flushMicrotasks();
     });
 
@@ -316,6 +315,11 @@ describe('useKOSync — no phantom re-prompt after resolving (#5527)', () => {
   test('a NEW remote report after resolution still prompts', async () => {
     const { result } = renderHook(() => useKOSync('h1-view1'));
     await settle();
+
+    await act(async () => {
+      dispatch('pull-kosync', { bookKey: 'h1-view1' });
+      await flushMicrotasks();
+    });
     expect(result.current.syncState).toBe('conflict');
 
     await act(async () => {
@@ -333,11 +337,7 @@ describe('useKOSync — no phantom re-prompt after resolving (#5527)', () => {
     });
 
     await act(async () => {
-      h.activeCallback?.(false);
-      await flushMicrotasks();
-    });
-    await act(async () => {
-      h.activeCallback?.(true);
+      dispatch('pull-kosync', { bookKey: 'h1-view1' });
       await flushMicrotasks();
     });
 

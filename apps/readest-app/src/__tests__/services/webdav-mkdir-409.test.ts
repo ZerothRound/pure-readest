@@ -6,7 +6,9 @@ import { mkdir, WebDAVRequestError, type WebDAVConfig } from '@/services/sync/pr
  * (e.g. Jianguoyun/坚果云) instead of the standard 405. `mkdir` must probe
  * with PROPFIND after a 409 and treat an existing target as success, while
  * keeping the "parent directory missing" error when the target really is
- * absent or the probe is inconclusive.
+ * absent. An inconclusive probe (auth blip, non-standard response, network
+ * failure) is treated as success so a repeat sync of an existing tree cannot
+ * wedge on 409 — a genuinely missing parent still surfaces on the write.
  */
 
 const ORIGINAL_FETCH = globalThis.fetch;
@@ -64,26 +66,20 @@ describe('mkdir 409 handling', () => {
     });
   });
 
-  test('keeps the 409 parent-missing error when the PROPFIND probe is inconclusive', async () => {
+  test('treats 409 + an inconclusive PROPFIND probe as success (non-standard server, auth blip)', async () => {
     fetchMock
       .mockResolvedValueOnce(new Response(null, { status: 409 }))
       .mockResolvedValueOnce(new Response(null, { status: 401 }));
 
-    await expect(mkdir(config, '/Readest')).rejects.toMatchObject({
-      status: 409,
-      message: 'Parent directory missing',
-    });
+    await expect(mkdir(config, '/Readest')).resolves.toBeUndefined();
   });
 
-  test('keeps the 409 parent-missing error when the PROPFIND probe fails', async () => {
+  test('treats 409 + a failed PROPFIND probe as success (network blip)', async () => {
     fetchMock
       .mockResolvedValueOnce(new Response(null, { status: 409 }))
       .mockRejectedValueOnce(new Error('network down'));
 
-    await expect(mkdir(config, '/Readest')).rejects.toMatchObject({
-      status: 409,
-      message: 'Parent directory missing',
-    });
+    await expect(mkdir(config, '/Readest')).resolves.toBeUndefined();
   });
 
   test('still succeeds on the standard idempotent statuses 201 and 405', async () => {
